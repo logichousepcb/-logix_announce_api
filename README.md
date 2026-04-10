@@ -18,6 +18,17 @@ This project combines:
 
 ![Logix Message Announcer hardware](docs/images/device.jpg)
 
+## Enclosure
+
+The device enclosure is a two-piece 3D-printed case designed to hold the announcer hardware as a finished unit. The top lid is modeled to fit the display opening, and the bottom section forms the main body of the case.
+
+![Logix Message Announcer 3D printed case](docs/images/la-case.png)
+
+3D model files:
+
+- [Case base](docs/models/la-case-base.3mf)
+- [Case lid with LCD opening](docs/models/la-case-lid-lcd.3mf)
+
 ## Web UI
 
 ![Logix Message Announcer web UI](docs/images/web-ui.png)
