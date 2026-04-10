@@ -1,2 +1,2 @@
 #pragma once
-#define BUILD_VERSION "1.071"
+#define BUILD_VERSION "1.072"

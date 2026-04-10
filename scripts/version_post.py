@@ -1,11 +1,13 @@
 Import("env")
 
 from pathlib import Path
+import shutil
 
 
 ROOT = Path(env["PROJECT_DIR"])
 VERSION_FILE = ROOT / "version.txt"
 HEADER_FILE = ROOT / "include" / "build_version.h"
+RELEASES_DIR = ROOT / "releases"
 
 
 def parse_version(value: str):
@@ -43,11 +45,22 @@ def write_header(version_text: str):
     )
 
 
+def export_release_binary(version_text: str, target):
+    release_source = Path(str(target[0]))
+    RELEASES_DIR.mkdir(parents=True, exist_ok=True)
+    release_name = f"logix_announce_api-{version_text}.bin"
+    release_target = RELEASES_DIR / release_name
+    shutil.copyfile(release_source, release_target)
+    print(f"[release] Exported {release_target.relative_to(ROOT)}")
+
+
 def on_build_success(target, source, env):
     current = ensure_current_version()
     parsed = parse_version(current)
     if parsed is None:
         return
+
+    export_release_binary(current, target)
 
     major, minor, width = parsed
     next_version = format_version(major, minor + 1, width)
