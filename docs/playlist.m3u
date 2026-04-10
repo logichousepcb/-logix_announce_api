@@ -1,0 +1,18 @@
+#EXTM3U
+
+# Sample playlist for Logix Announce device.
+# - One filename per line (SD root only, no folder paths or URLs).
+# - Supported formats: .mp3, .wav
+# - Lines starting with # are ignored.
+# - Upload this file via the web UI, then press Play next to it to load
+#   all entries into the active queue and start playback immediately.
+
+#EXTINF:10,Morning Chime
+depart light dlw.mp3
+
+#EXTINF:8,Door Bell
+ttsmaker-file-2026-3-21-10-9-47.wav
+
+#EXTINF:15,Announcement Tone
+depart light church street.mp3
+

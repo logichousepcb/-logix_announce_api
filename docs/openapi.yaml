@@ -1,0 +1,1182 @@
+openapi: 3.0.3
+info:
+  title: Logix Announce API
+  version: 1.0.0
+  description: |
+    HTTP API served by the ESP32 firmware for announcement playback.
+    Keep this spec aligned with route handlers in `src/api_server.cpp`.
+servers:
+  - url: http://device-ip
+    description: Device local network address
+tags:
+  - name: Playback
+  - name: System
+paths:
+  /:
+    get:
+      tags: [System]
+      summary: Device web UI landing page
+      operationId: getWebUi
+      responses:
+        '200':
+          description: HTML page with basic device network info
+          content:
+            text/html:
+              schema:
+                type: string
+
+  /play:
+    post:
+      tags: [Playback]
+      summary: Play an audio file from SD storage
+      operationId: playFile
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PlayRequest'
+            examples:
+              playMp3:
+                value:
+                  file: announcement.mp3
+              playWav:
+                value:
+                  file: announcement.wav
+      responses:
+        '200':
+          description: Playback started
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PlaySuccessResponse'
+              examples:
+                ok:
+                  value:
+                    status: ok
+                    file: announcement.mp3
+        '400':
+          description: Invalid request payload
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              examples:
+                noBody:
+                  value:
+                    status: error
+                    message: No JSON body
+                invalidJson:
+                  value:
+                    status: error
+                    message: Invalid JSON
+                missingFile:
+                  value:
+                    status: error
+                    message: Missing 'file' field
+                invalidFilename:
+                  value:
+                    status: error
+                    message: Invalid filename
+        '404':
+          description: Requested file not found on SD card
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              examples:
+                notFound:
+                  value:
+                    status: error
+                    message: File not found
+        '500':
+          description: Playback failed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              examples:
+                playbackFailed:
+                  value:
+                    status: error
+                    message: Playback failed
+
+  /stop:
+    post:
+      tags: [Playback]
+      summary: Stop the currently playing audio
+      operationId: stopPlayback
+      responses:
+        '200':
+          description: Playback stopped
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StatusMessageResponse'
+              examples:
+                stopped:
+                  value:
+                    status: ok
+                    message: Stopped
+
+  /status:
+    get:
+      tags: [System]
+      summary: Get playback status
+      operationId: getStatus
+      responses:
+        '200':
+          description: Current playback status
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StatusResponse'
+              examples:
+                idle:
+                  value:
+                    status: ok
+                    playing: false
+                    audio_state: STOPPED
+                    volume: 50
+                    audio_file_label: '---'
+                    queue_pause_seconds: 5
+                active:
+                  value:
+                    status: ok
+                    playing: true
+                    audio_state: PLAYING
+                    volume: 80
+                    audio_file_label: announcement.wav
+                    queue_pause_seconds: 5
+
+  /version:
+    get:
+      tags: [System]
+      summary: Get current firmware build version
+      operationId: getVersion
+      responses:
+        '200':
+          description: Current build version
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/VersionResponse'
+              examples:
+                current:
+                  value:
+                    status: ok
+                    version: 1.003
+
+  /network:
+    get:
+      tags: [System]
+      summary: Get active network interface status
+      operationId: getNetworkStatus
+      responses:
+        '200':
+          description: Current network mode and link information
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/NetworkStatusResponse'
+              examples:
+                ethernet:
+                  value:
+                    status: ok
+                    mode: eth
+                    connected: true
+                    ip: 192.168.1.50
+                    mac: AA:BB:CC:DD:EE:FF
+                wifi:
+                  value:
+                    status: ok
+                    mode: wifi
+                    connected: true
+                    ip: 192.168.1.61
+                    mac: 11:22:33:44:55:66
+
+  /network/mode:
+    post:
+      tags: [System]
+      summary: Switch active network mode between ETH and WIFI
+      operationId: setNetworkMode
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/NetworkModeRequest'
+            examples:
+              useEthernet:
+                value:
+                  mode: eth
+              useWifi:
+                value:
+                  mode: wifi
+      responses:
+        '200':
+          description: Network mode switched
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/NetworkStatusResponse'
+              examples:
+                switched:
+                  value:
+                    status: ok
+                    mode: wifi
+                    connected: false
+                    ip: 0.0.0.0
+                    mac: 11:22:33:44:55:66
+        '400':
+          description: Invalid request payload
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              examples:
+                noBody:
+                  value:
+                    status: error
+                    message: No JSON body
+                invalidJson:
+                  value:
+                    status: error
+                    message: Invalid JSON
+                invalidMode:
+                  value:
+                    status: error
+                    message: Invalid mode, use 'eth' or 'wifi'
+        '500':
+          description: Network mode switch failed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              examples:
+                failed:
+                  value:
+                    status: error
+                    message: Failed to switch network mode
+
+  /network/wifi:
+    get:
+      tags: [System]
+      summary: Get stored WiFi credentials
+      operationId: getWifiConfig
+      responses:
+        '200':
+          description: Stored WiFi credentials
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WifiConfigResponse'
+              examples:
+                current:
+                  value:
+                    status: ok
+                    ssid: OfficeWiFi
+                    password: secret123
+
+    post:
+      tags: [System]
+      summary: Save WiFi credentials
+      operationId: setWifiConfig
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/WifiConfigRequest'
+            examples:
+              set:
+                value:
+                  ssid: OfficeWiFi
+                  password: secret123
+      responses:
+        '200':
+          description: WiFi credentials saved
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WifiConfigResponse'
+              examples:
+                saved:
+                  value:
+                    status: ok
+                    ssid: OfficeWiFi
+                    password: secret123
+        '400':
+          description: Invalid request payload
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              examples:
+                noBody:
+                  value:
+                    status: error
+                    message: No JSON body
+                invalidJson:
+                  value:
+                    status: error
+                    message: Invalid JSON
+                invalidFields:
+                  value:
+                    status: error
+                    message: Missing or invalid WiFi fields
+        '500':
+          description: Save/apply failed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              examples:
+                persist:
+                  value:
+                    status: error
+                    message: Failed to persist playlist state
+                apply:
+                  value:
+                    status: error
+                    message: Failed to apply WiFi credentials
+
+  /volume:
+    get:
+      tags: [System]
+      summary: Get current playback volume
+      operationId: getVolume
+      responses:
+        '200':
+          description: Current volume level
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/VolumeResponse'
+              examples:
+                current:
+                  value:
+                    status: ok
+                    volume: 50
+
+    post:
+      tags: [Playback]
+      summary: Set playback volume
+      description: Set output gain as percentage from 0 (mute) to 100 (max).
+      operationId: setVolume
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/VolumeRequest'
+            examples:
+              half:
+                value:
+                  volume: 50
+              loud:
+                value:
+                  volume: 90
+      responses:
+        '200':
+          description: Volume updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/VolumeResponse'
+              examples:
+                applied:
+                  value:
+                    status: ok
+                    volume: 50
+        '400':
+          description: Invalid request payload
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              examples:
+                noBody:
+                  value:
+                    status: error
+                    message: No JSON body
+                invalidJson:
+                  value:
+                    status: error
+                    message: Invalid JSON
+                missingOrInvalidField:
+                  value:
+                    status: error
+                    message: Missing or invalid 'volume' field
+                outOfRange:
+                  value:
+                    status: error
+                    message: Volume out of range (0-100)
+        '500':
+          description: Volume update failed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              examples:
+                failed:
+                  value:
+                    status: error
+                    message: Failed to set volume
+
+  /files:
+    get:
+      tags: [System]
+      summary: List playable MP3/WAV files from SD root
+      operationId: listFiles
+      responses:
+        '200':
+          description: MP3/WAV file listing
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FilesResponse'
+              examples:
+                files:
+                  value:
+                    status: ok
+                    files:
+                      - name: announcement.mp3
+                        size: 346112
+                      - name: chime.wav
+                        size: 102400
+                    count: 2
+        '500':
+          description: SD root could not be opened
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              examples:
+                sdError:
+                  value:
+                    status: error
+                    message: Failed to open SD root
+
+    delete:
+      tags: [System]
+      summary: Delete an audio file (.mp3 or .wav) from SD root
+      operationId: deleteFile
+      parameters:
+        - in: query
+          name: name
+          required: true
+          schema:
+            type: string
+          description: Filename to delete, for example announcement.mp3 or announcement.wav
+      responses:
+        '200':
+          description: File deleted
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FileActionResponse'
+              examples:
+                deleted:
+                  value:
+                    status: ok
+                    file: announcement.mp3
+        '400':
+          description: Missing or invalid filename
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              examples:
+                missing:
+                  value:
+                    status: error
+                    message: Missing 'name' query parameter
+                invalid:
+                  value:
+                    status: error
+                    message: Invalid filename
+                invalidType:
+                  value:
+                    status: error
+                    message: Only .mp3 or .wav files are supported
+        '404':
+          description: File not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              examples:
+                notFound:
+                  value:
+                    status: error
+                    message: File not found
+        '500':
+          description: Delete operation failed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              examples:
+                failed:
+                  value:
+                    status: error
+                    message: Failed to delete file
+
+  /files/upload:
+    post:
+      tags: [System]
+      summary: Upload an audio file (.mp3 or .wav) to SD root
+      operationId: uploadFile
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required:
+                - file
+              properties:
+                file:
+                  type: string
+                  format: binary
+      responses:
+        '200':
+          description: File uploaded
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FileActionResponse'
+              examples:
+                uploaded:
+                  value:
+                    status: ok
+                    file: announcement.mp3
+        '400':
+          description: Invalid upload request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              examples:
+                invalidName:
+                  value:
+                    status: error
+                    message: Invalid filename
+                invalidType:
+                  value:
+                    status: error
+                    message: Only .mp3 or .wav files are supported
+        '500':
+          description: Upload failed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              examples:
+                openFailed:
+                  value:
+                    status: error
+                    message: Failed to open file for upload
+                writeFailed:
+                  value:
+                    status: error
+                    message: Failed while writing upload data
+                aborted:
+                  value:
+                    status: error
+                    message: Upload aborted
+
+  /playlist/item:
+    post:
+      tags: [Playback]
+      summary: Mark or unmark file as playlist active
+      operationId: setPlaylistItem
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PlaylistItemRequest'
+            examples:
+              activate:
+                value:
+                  file: announcement.mp3
+                  active: true
+              deactivate:
+                value:
+                  file: announcement.mp3
+                  active: false
+              activateWav:
+                value:
+                  file: chime.wav
+                  active: true
+      responses:
+        '200':
+          description: Playlist active state updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PlaylistItemResponse'
+              examples:
+                updated:
+                  value:
+                    status: ok
+                    file: announcement.mp3
+                    active: true
+                    queue_enabled: false
+        '400':
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              examples:
+                invalid:
+                  value:
+                    status: error
+                    message: Missing or invalid fields
+                invalidName:
+                  value:
+                    status: error
+                    message: Invalid filename
+                invalidType:
+                  value:
+                    status: error
+                    message: Only .mp3 or .wav files are supported
+        '404':
+          description: File not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              examples:
+                notFound:
+                  value:
+                    status: error
+                    message: File not found
+        '500':
+          description: State update failed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              examples:
+                full:
+                  value:
+                    status: error
+                    message: Playlist is full
+                persist:
+                  value:
+                    status: error
+                    message: Failed to persist playlist state
+
+  /playlist/queue:
+    post:
+      tags: [Playback]
+      summary: Enable or disable queued playback mode
+      operationId: setPlaylistQueue
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PlaylistQueueRequest'
+            examples:
+              on:
+                value:
+                  enabled: true
+              off:
+                value:
+                  enabled: false
+      responses:
+        '200':
+          description: Queue mode updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/QueueStateResponse'
+              examples:
+                on:
+                  value:
+                    status: ok
+                    queue_enabled: true
+                    active_count: 3
+                    queue_pause_seconds: 5
+                off:
+                  value:
+                    status: ok
+                    queue_enabled: false
+                    active_count: 3
+                    queue_pause_seconds: 5
+        '400':
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              examples:
+                invalid:
+                  value:
+                    status: error
+                    message: Missing or invalid 'enabled' field
+        '500':
+          description: Failed to persist queue state
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              examples:
+                persist:
+                  value:
+                    status: error
+                    message: Failed to persist playlist state
+
+  /playlist/start:
+    post:
+      tags: [Playback]
+      summary: Start queued playback mode
+      description: Equivalent to turning the Web UI Play Queued button ON.
+      operationId: startPlaylistQueue
+      responses:
+        '200':
+          description: Queued playback mode started
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/QueueStateResponse'
+              examples:
+                started:
+                  value:
+                    status: ok
+                    queue_enabled: true
+                    active_count: 2
+                    queue_pause_seconds: 5
+        '400':
+          description: No active files available to queue
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              examples:
+                noActive:
+                  value:
+                    status: error
+                    message: No active files in playlist
+        '500':
+          description: Failed to persist queue state
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              examples:
+                persist:
+                  value:
+                    status: error
+                    message: Failed to persist playlist state
+
+  /playlist/pause:
+    get:
+      tags: [Playback]
+      summary: Get queued playback pause interval
+      operationId: getPlaylistPause
+      responses:
+        '200':
+          description: Current queued playback pause interval
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/QueuePauseResponse'
+              examples:
+                current:
+                  value:
+                    status: ok
+                    queue_pause_seconds: 5
+
+    post:
+      tags: [Playback]
+      summary: Set queued playback pause interval
+      operationId: setPlaylistPause
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/QueuePauseRequest'
+            examples:
+              setPause:
+                value:
+                  seconds: 5
+      responses:
+        '200':
+          description: Queue pause updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/QueuePauseResponse'
+              examples:
+                updated:
+                  value:
+                    status: ok
+                    queue_pause_seconds: 5
+        '400':
+          description: Invalid request payload
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              examples:
+                noBody:
+                  value:
+                    status: error
+                    message: No JSON body
+                invalidJson:
+                  value:
+                    status: error
+                    message: Invalid JSON
+                missingField:
+                  value:
+                    status: error
+                    message: Missing or invalid 'seconds' field
+                outOfRange:
+                  value:
+                    status: error
+                    message: Pause out of range (1-180)
+        '500':
+          description: Failed to persist queue pause
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              examples:
+                persist:
+                  value:
+                    status: error
+                    message: Failed to persist playlist state
+
+components:
+  schemas:
+    PlayRequest:
+      type: object
+      required:
+        - file
+      properties:
+        file:
+          type: string
+          description: |
+            Audio filename or path. The firmware rejects path traversal attempts
+            containing `..` and normalizes missing leading `/`.
+          minLength: 1
+      additionalProperties: false
+
+    PlaySuccessResponse:
+      type: object
+      required:
+        - status
+        - file
+      properties:
+        status:
+          type: string
+          enum: [ok]
+        file:
+          type: string
+
+    StatusMessageResponse:
+      type: object
+      required:
+        - status
+        - message
+      properties:
+        status:
+          type: string
+          enum: [ok]
+        message:
+          type: string
+
+    StatusResponse:
+      type: object
+      required:
+        - status
+        - playing
+        - audio_state
+        - volume
+        - audio_file_label
+        - queue_enabled
+        - active_count
+        - queue_pause_seconds
+      properties:
+        status:
+          type: string
+          enum: [ok]
+        playing:
+          type: boolean
+        audio_state:
+          type: string
+          enum: [PLAYING, QUEUED PLAY, STOPPED]
+        volume:
+          type: integer
+          minimum: 0
+          maximum: 100
+        audio_file_label:
+          type: string
+          description: OLED-style current file label with leading slash removed and a 21-character maximum.
+        queue_enabled:
+          type: boolean
+        active_count:
+          type: integer
+          minimum: 0
+        queue_pause_seconds:
+          type: integer
+          minimum: 1
+          maximum: 180
+
+    VolumeRequest:
+      type: object
+      required:
+        - volume
+      properties:
+        volume:
+          type: integer
+          minimum: 0
+          maximum: 100
+      additionalProperties: false
+
+    VolumeResponse:
+      type: object
+      required:
+        - status
+        - volume
+      properties:
+        status:
+          type: string
+          enum: [ok]
+        volume:
+          type: integer
+          minimum: 0
+          maximum: 100
+
+    FileActionResponse:
+      type: object
+      required:
+        - status
+        - file
+      properties:
+        status:
+          type: string
+          enum: [ok]
+        file:
+          type: string
+
+    FileItem:
+      type: object
+      required:
+        - name
+        - size
+        - active
+      properties:
+        name:
+          type: string
+        size:
+          type: integer
+          format: int64
+          minimum: 0
+        active:
+          type: boolean
+
+    FilesResponse:
+      type: object
+      required:
+        - status
+        - queue_enabled
+        - active_count
+        - queue_pause_seconds
+        - files
+        - count
+      properties:
+        status:
+          type: string
+          enum: [ok]
+        queue_enabled:
+          type: boolean
+        active_count:
+          type: integer
+          minimum: 0
+        queue_pause_seconds:
+          type: integer
+          minimum: 1
+          maximum: 180
+        files:
+          type: array
+          items:
+            $ref: '#/components/schemas/FileItem'
+        count:
+          type: integer
+          minimum: 0
+
+    PlaylistItemRequest:
+      type: object
+      required:
+        - file
+        - active
+      properties:
+        file:
+          type: string
+        active:
+          type: boolean
+      additionalProperties: false
+
+    PlaylistItemResponse:
+      type: object
+      required:
+        - status
+        - file
+        - active
+        - queue_enabled
+      properties:
+        status:
+          type: string
+          enum: [ok]
+        file:
+          type: string
+        active:
+          type: boolean
+        queue_enabled:
+          type: boolean
+
+    PlaylistQueueRequest:
+      type: object
+      required:
+        - enabled
+      properties:
+        enabled:
+          type: boolean
+      additionalProperties: false
+
+    QueueStateResponse:
+      type: object
+      required:
+        - status
+        - queue_enabled
+        - active_count
+        - queue_pause_seconds
+      properties:
+        status:
+          type: string
+          enum: [ok]
+        queue_enabled:
+          type: boolean
+        active_count:
+          type: integer
+          minimum: 0
+        queue_pause_seconds:
+          type: integer
+          minimum: 1
+          maximum: 180
+
+    QueuePauseRequest:
+      type: object
+      required:
+        - seconds
+      properties:
+        seconds:
+          type: integer
+          minimum: 1
+          maximum: 180
+      additionalProperties: false
+
+    QueuePauseResponse:
+      type: object
+      required:
+        - status
+        - queue_pause_seconds
+      properties:
+        status:
+          type: string
+          enum: [ok]
+        queue_pause_seconds:
+          type: integer
+          minimum: 1
+          maximum: 180
+
+    VersionResponse:
+      type: object
+      required:
+        - status
+        - version
+      properties:
+        status:
+          type: string
+          enum: [ok]
+        version:
+          type: string
+
+    NetworkModeRequest:
+      type: object
+      required:
+        - mode
+      properties:
+        mode:
+          type: string
+          enum: [eth, wifi]
+      additionalProperties: false
+
+    NetworkStatusResponse:
+      type: object
+      required:
+        - status
+        - mode
+        - connected
+        - ip
+        - mac
+      properties:
+        status:
+          type: string
+          enum: [ok]
+        mode:
+          type: string
+          enum: [eth, wifi]
+        connected:
+          type: boolean
+        ip:
+          type: string
+        mac:
+          type: string
+
+    WifiConfigRequest:
+      type: object
+      required:
+        - ssid
+        - password
+      properties:
+        ssid:
+          type: string
+        password:
+          type: string
+      additionalProperties: false
+
+    WifiConfigResponse:
+      type: object
+      required:
+        - status
+        - ssid
+        - password
+      properties:
+        status:
+          type: string
+          enum: [ok]
+        ssid:
+          type: string
+        password:
+          type: string
+
+    ErrorResponse:
+      type: object
+      required:
+        - status
+        - message
+      properties:
+        status:
+          type: string
+          enum: [error]
+        message:
+          type: string
