@@ -510,14 +510,16 @@ static void handleWebUi() {
         .pause-label { font-size: 13px; color: #334155; }
         .pause-input { width: 70px; padding: 7px 8px; border: 1px solid #cbd5e1; border-radius: 8px; font-size: 13px; }
         .net-input { width: 180px; padding: 7px 8px; border: 1px solid #cbd5e1; border-radius: 8px; font-size: 13px; }
+        .version-status { margin-left: 6px; color: #475569; }
+        .version-link { cursor: pointer; text-decoration: underline dotted; }
         input[type='file'] { font-size: 14px; }
     </style>
 </head>
 <body>
     <main class='wrap'>
         <section class='card'>
-            <p class='version'>Version __VERSION__</p>
             <h1>Logix Message Announcer</h1>
+            <p class='version'>Version <span id='firmwareVersion' class='version-link' title='Download newest firmware binary'>__VERSION__</span><span id='versionStatus' class='version-status'></span></p>
             <div class='row'>
                 <div class='item'><span class='label'>MAC Address</span><span id='macAddress' class='value'>__MAC__</span></div>
                 <div class='item'><span class='label'>IP Address</span><span id='ipAddress' class='value'>__IP__</span></div>
@@ -566,8 +568,132 @@ static void handleWebUi() {
     </main>
 
     <script>
+        const repoTagsUrl = 'https://api.github.com/repos/logichousepcb/-logix_announce_api/tags?per_page=20';
+        const repoRawBaseUrl = 'https://raw.githubusercontent.com/logichousepcb/-logix_announce_api/';
+        let latestRepoVersion = null;
+
         function setStatus(msg) {
             document.getElementById('status').textContent = msg;
+        }
+
+        function buildReleaseBinaryUrl(versionText) {
+            const normalizedVersion = normalizeVersion(versionText);
+            if (!normalizedVersion) {
+                return null;
+            }
+            return repoRawBaseUrl + 'v' + normalizedVersion + '/releases/logix_announce_api-' + normalizedVersion + '.bin';
+        }
+
+        function handleVersionClick() {
+            const versionNode = document.getElementById('firmwareVersion');
+            if (!versionNode) {
+                return;
+            }
+
+            const currentVersion = normalizeVersion(versionNode.textContent);
+            const targetVersion = latestRepoVersion || currentVersion;
+            const releaseUrl = buildReleaseBinaryUrl(targetVersion);
+            if (!releaseUrl) {
+                return;
+            }
+
+            window.open(releaseUrl, '_blank', 'noopener');
+        }
+
+        function parseVersionParts(versionText) {
+            const clean = String(versionText || '').trim().replace(/^v/i, '');
+            if (!clean) {
+                return null;
+            }
+
+            const parts = clean.split('.');
+            const numericParts = [];
+            for (const part of parts) {
+                if (!/^\d+$/.test(part)) {
+                    return null;
+                }
+                numericParts.push(Number(part));
+            }
+            return numericParts;
+        }
+
+        function compareVersions(leftText, rightText) {
+            const left = parseVersionParts(leftText);
+            const right = parseVersionParts(rightText);
+            if (!left || !right) {
+                return 0;
+            }
+
+            const maxLength = Math.max(left.length, right.length);
+            for (let index = 0; index < maxLength; index++) {
+                const leftPart = index < left.length ? left[index] : 0;
+                const rightPart = index < right.length ? right[index] : 0;
+                if (leftPart < rightPart) {
+                    return -1;
+                }
+                if (leftPart > rightPart) {
+                    return 1;
+                }
+            }
+
+            return 0;
+        }
+
+        function normalizeVersion(versionText) {
+            const clean = String(versionText || '').trim().replace(/^v/i, '');
+            return clean;
+        }
+
+        async function loadRepoVersionStatus() {
+            const versionNode = document.getElementById('firmwareVersion');
+            const statusNode = document.getElementById('versionStatus');
+            if (!versionNode || !statusNode) {
+                return;
+            }
+
+            const currentVersion = normalizeVersion(versionNode.textContent);
+            if (!currentVersion) {
+                return;
+            }
+
+            try {
+                const res = await fetch(repoTagsUrl, {
+                    headers: { 'Accept': 'application/vnd.github+json' }
+                });
+                if (!res.ok) {
+                    return;
+                }
+
+                const tags = await res.json();
+                if (!Array.isArray(tags) || tags.length === 0) {
+                    return;
+                }
+
+                let latestVersion = null;
+                for (const tag of tags) {
+                    const candidate = normalizeVersion(tag && tag.name ? tag.name : '');
+                    if (!candidate || !parseVersionParts(candidate)) {
+                        continue;
+                    }
+                    if (!latestVersion || compareVersions(candidate, latestVersion) > 0) {
+                        latestVersion = candidate;
+                    }
+                }
+
+                if (!latestVersion) {
+                    return;
+                }
+
+                latestRepoVersion = latestVersion;
+
+                if (compareVersions(currentVersion, latestVersion) >= 0) {
+                    statusNode.textContent = ' (UP TO DATE)';
+                } else {
+                    statusNode.textContent = ' (' + latestVersion + ')';
+                }
+            } catch (_) {
+                // Ignore GitHub version check failures and leave the local version visible.
+            }
         }
 
         function updateNetworkInfo(data) {
@@ -883,6 +1009,8 @@ static void handleWebUi() {
         loadNetworkMode();
         loadWifiConfig();
         loadFiles();
+        loadRepoVersionStatus();
+        document.getElementById('firmwareVersion').addEventListener('click', handleVersionClick);
     </script>
 </body>
 </html>
