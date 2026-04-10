@@ -1365,7 +1365,9 @@ static void handleUploadFileComplete() {
     }
 
 // ─────────────────────────────────────────────
-//  POST /play   { "file": "announcement.mp3" | "announcement.wav" | "playlist.m3u" }
+//  POST /play
+//    { "file": "announcement.mp3" }           — play from SD card
+//    { "url":  "http://host/stream.mp3" }     — play from HTTP/HTTPS URL
 // ─────────────────────────────────────────────
 static void handlePlay() {
     if (!server.hasArg("plain")) {
@@ -1380,9 +1382,30 @@ static void handlePlay() {
         return;
     }
 
+    const char* url = doc["url"] | "";
+    if (strlen(url) > 0) {
+        if (strncmp(url, "http://", 7) != 0 && strncmp(url, "https://", 8) != 0) {
+            sendJson(400, "error", "URL must start with http:// or https://");
+            return;
+        }
+
+        if (!audioPlayUrl(url)) {
+            sendJson(500, "error", "URL playback failed");
+            return;
+        }
+
+        JsonDocument resp;
+        resp["status"] = "ok";
+        resp["url"] = url;
+        String body;
+        serializeJson(resp, body);
+        server.send(200, "application/json", body);
+        return;
+    }
+
     const char* filename = doc["file"] | "";
     if (strlen(filename) == 0) {
-        sendJson(400, "error", "Missing 'file' field");
+        sendJson(400, "error", "Missing 'file' or 'url' field");
         return;
     }
 

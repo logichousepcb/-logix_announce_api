@@ -1,6 +1,7 @@
 #include "audio_manager.h"
 #include "../include/pins.h"
 #include <Arduino.h>
+#include <AudioFileSourceHTTPStream.h>
 #include <AudioFileSourceSD.h>
 #include <AudioGenerator.h>
 #include <AudioGeneratorMP3.h>
@@ -13,14 +14,14 @@
 // ─────────────────────────────────────────────
 //  State
 // ─────────────────────────────────────────────
-static AudioOutputI2S*    output  = nullptr;
-static AudioGenerator*    decoder = nullptr;
-static AudioFileSourceSD* source  = nullptr;
+static AudioOutputI2S*  output  = nullptr;
+static AudioGenerator*  decoder = nullptr;
+static AudioFileSource* source  = nullptr;
 static SemaphoreHandle_t  audio_mutex = nullptr;
 static TaskHandle_t       audio_task_handle = nullptr;
 static uint8_t            volume_percent = 50;
 static volatile bool      playback_running = false;
-static char               current_file_path[128] = "";
+static char               current_file_path[256] = "";
 
 static bool hasExtensionIgnoreCase(const char* filename, const char* extension) {
     if (filename == nullptr || extension == nullptr) {
@@ -259,6 +260,55 @@ uint8_t audioGetVolume() {
     }
 
     return current;
+}
+
+bool audioPlayUrl(const char* url) {
+    if (audio_mutex == nullptr || output == nullptr) {
+        return false;
+    }
+
+    if (url == nullptr ||
+        (strncmp(url, "http://",  7) != 0 &&
+         strncmp(url, "https://", 8) != 0)) {
+        return false;
+    }
+
+    if (xSemaphoreTake(audio_mutex, pdMS_TO_TICKS(500)) != pdTRUE) {
+        return false;
+    }
+
+    stopPlaybackLocked(false);
+
+    AudioFileSourceHTTPStream* http_source = new AudioFileSourceHTTPStream(url);
+    if (http_source == nullptr || !http_source->isOpen()) {
+        delete http_source;
+        xSemaphoreGive(audio_mutex);
+        return false;
+    }
+
+    source = http_source;
+
+    decoder = createDecoderForPath(url);
+    if (decoder == nullptr) {
+        closeSourceLocked();
+        xSemaphoreGive(audio_mutex);
+        return false;
+    }
+
+    if (!decoder->begin(source, output)) {
+        closeSourceLocked();
+        delete decoder;
+        decoder = nullptr;
+        xSemaphoreGive(audio_mutex);
+        return false;
+    }
+
+    strncpy(current_file_path, url, sizeof(current_file_path) - 1);
+    current_file_path[sizeof(current_file_path) - 1] = '\0';
+    playback_running = true;
+
+    xSemaphoreGive(audio_mutex);
+    return true;
 }
 
 void audioLoop() {
