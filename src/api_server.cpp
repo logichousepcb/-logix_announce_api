@@ -3,6 +3,7 @@
 #include "eth_manager.h"
 #include "../include/build_version.h"
 #include <Arduino.h>
+#include <Update.h>
 #include <WebServer.h>
 #include <ArduinoJson.h>
 #include <SD.h>
@@ -18,6 +19,12 @@ static bool upload_failed = false;
 static int upload_status_code = 200;
 static String upload_error;
 static String upload_saved_name;
+static bool firmware_upload_failed = false;
+static int firmware_upload_status_code = 200;
+static String firmware_upload_error;
+static String firmware_uploaded_version;
+static bool firmware_reboot_pending = false;
+static uint32_t firmware_reboot_at_ms = 0;
 static const char* playlist_state_path = "/playlist_state.json";
 static const char* queue_playlist_path = "/playlist.m3u";
 static String active_playlist_files[64];
@@ -39,6 +46,12 @@ static void sendJson(int code, const char* status, const char* message) {
     JsonDocument doc;
     doc["status"]  = status;
     doc["message"] = message;
+    String body;
+    serializeJson(doc, body);
+    server.send(code, "application/json", body);
+}
+
+static void sendJsonDocument(int code, JsonDocument& doc) {
     String body;
     serializeJson(doc, body);
     server.send(code, "application/json", body);
@@ -78,6 +91,10 @@ static bool hasPlaylistExtension(const char* filename) {
 
 static bool hasSupportedLibraryFileExtension(const char* filename) {
     return hasSupportedAudioExtension(filename) || hasPlaylistExtension(filename);
+}
+
+static bool hasFirmwareExtension(const char* filename) {
+    return hasExtensionIgnoreCase(filename, ".bin");
 }
 
 static const char* getAudioStateLabel() {
@@ -511,7 +528,16 @@ static void handleWebUi() {
         .pause-input { width: 70px; padding: 7px 8px; border: 1px solid #cbd5e1; border-radius: 8px; font-size: 13px; }
         .net-input { width: 180px; padding: 7px 8px; border: 1px solid #cbd5e1; border-radius: 8px; font-size: 13px; }
         .version-status { margin-left: 6px; color: #475569; }
+        .version-status.up-to-date { color: #15803d; font-weight: 700; }
         .version-link { cursor: pointer; text-decoration: underline dotted; }
+        .modal-backdrop { position: fixed; inset: 0; background: rgba(15, 23, 42, 0.55); display: none; align-items: center; justify-content: center; padding: 18px; z-index: 20; }
+        .modal-backdrop.open { display: flex; }
+        .modal { width: min(100%, 460px); background: #ffffff; border-radius: 16px; box-shadow: 0 30px 70px rgba(15, 23, 42, 0.28); padding: 20px; }
+        .modal h3 { margin: 0 0 10px; color: #0f172a; }
+        .modal p { margin: 0 0 12px; color: #475569; font-size: 14px; line-height: 1.4; }
+        .modal-actions { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 14px; }
+        .btn-secondary { background: #e2e8f0; color: #1e293b; }
+        .firmware-input { width: 100%; font-size: 14px; }
         input[type='file'] { font-size: 14px; }
     </style>
 </head>
@@ -567,6 +593,19 @@ static void handleWebUi() {
         </section>
     </main>
 
+    <div id='firmwareModal' class='modal-backdrop' onclick='dismissFirmwareModal(event)'>
+        <div class='modal'>
+            <h3>Firmware Update</h3>
+            <p id='firmwareModalSummary'>Select how you want to update the device firmware.</p>
+            <input id='firmwareFile' class='firmware-input' type='file' accept='.bin,application/octet-stream'>
+            <div class='modal-actions'>
+                <button id='updateLatestButton' class='btn btn-upload' onclick='updateToLatestFirmware()'>Update To Latest</button>
+                <button class='btn' onclick='uploadSelectedFirmware()'>Upload Selected .bin</button>
+                <button class='btn btn-secondary' onclick='closeFirmwareModal()'>Close</button>
+            </div>
+        </div>
+    </div>
+
     <script>
         const repoTagsUrl = 'https://api.github.com/repos/logichousepcb/-logix_announce_api/tags?per_page=20';
         const repoRawBaseUrl = 'https://raw.githubusercontent.com/logichousepcb/-logix_announce_api/';
@@ -586,18 +625,98 @@ static void handleWebUi() {
 
         function handleVersionClick() {
             const versionNode = document.getElementById('firmwareVersion');
-            if (!versionNode) {
+            const modal = document.getElementById('firmwareModal');
+            const summaryNode = document.getElementById('firmwareModalSummary');
+            const latestButton = document.getElementById('updateLatestButton');
+            if (!versionNode || !modal || !summaryNode || !latestButton) {
                 return;
             }
 
             const currentVersion = normalizeVersion(versionNode.textContent);
             const targetVersion = latestRepoVersion || currentVersion;
+            if (latestRepoVersion && compareVersions(latestRepoVersion, currentVersion) > 0) {
+                summaryNode.textContent = 'Current version ' + currentVersion + '. Latest repo version is ' + latestRepoVersion + '.';
+            } else {
+                summaryNode.textContent = 'Current version ' + currentVersion + ' is up to date. You can reinstall it or upload another .bin file.';
+            }
+            latestButton.textContent = 'Update To ' + targetVersion;
+            modal.classList.add('open');
+        }
+
+        function closeFirmwareModal() {
+            const modal = document.getElementById('firmwareModal');
+            if (modal) {
+                modal.classList.remove('open');
+            }
+        }
+
+        function dismissFirmwareModal(event) {
+            if (event.target && event.target.id === 'firmwareModal') {
+                closeFirmwareModal();
+            }
+        }
+
+        async function postFirmwareBlob(blob, filename) {
+            const formData = new FormData();
+            formData.append('file', blob, filename);
+
+            const res = await fetch('/firmware/update', {
+                method: 'POST',
+                body: formData
+            });
+
+            const data = await res.json();
+            if (!res.ok || data.status !== 'ok') {
+                throw new Error(data.message || 'Firmware update failed');
+            }
+
+            return data;
+        }
+
+        async function updateToLatestFirmware() {
+            const versionNode = document.getElementById('firmwareVersion');
+            const currentVersion = normalizeVersion(versionNode ? versionNode.textContent : '');
+            const targetVersion = latestRepoVersion || currentVersion;
             const releaseUrl = buildReleaseBinaryUrl(targetVersion);
             if (!releaseUrl) {
+                setStatus('Error: No firmware release URL available.');
                 return;
             }
 
-            window.open(releaseUrl, '_blank', 'noopener');
+            try {
+                setStatus('Downloading firmware ' + targetVersion + '...');
+                const firmwareRes = await fetch(releaseUrl);
+                if (!firmwareRes.ok) {
+                    throw new Error('Failed to download firmware ' + targetVersion);
+                }
+
+                const firmwareBlob = await firmwareRes.blob();
+                setStatus('Uploading firmware ' + targetVersion + '...');
+                const data = await postFirmwareBlob(firmwareBlob, 'logix_announce_api-' + targetVersion + '.bin');
+                closeFirmwareModal();
+                setStatus(data.message || 'Firmware uploaded. Device will reboot shortly.');
+            } catch (err) {
+                setStatus('Error: ' + err.message);
+            }
+        }
+
+        async function uploadSelectedFirmware() {
+            const input = document.getElementById('firmwareFile');
+            if (!input || !input.files || input.files.length === 0) {
+                setStatus('Select a .bin firmware file first.');
+                return;
+            }
+
+            const firmwareFile = input.files[0];
+            try {
+                setStatus('Uploading firmware ' + firmwareFile.name + '...');
+                const data = await postFirmwareBlob(firmwareFile, firmwareFile.name);
+                closeFirmwareModal();
+                input.value = '';
+                setStatus(data.message || 'Firmware uploaded. Device will reboot shortly.');
+            } catch (err) {
+                setStatus('Error: ' + err.message);
+            }
         }
 
         function parseVersionParts(versionText) {
@@ -687,8 +806,10 @@ static void handleWebUi() {
                 latestRepoVersion = latestVersion;
 
                 if (compareVersions(currentVersion, latestVersion) >= 0) {
+                    statusNode.classList.add('up-to-date');
                     statusNode.textContent = ' (UP TO DATE)';
                 } else {
+                    statusNode.classList.remove('up-to-date');
                     statusNode.textContent = ' (' + latestVersion + ')';
                 }
             } catch (_) {
@@ -1155,6 +1276,93 @@ static void handleUploadFileComplete() {
         serializeJson(resp, body);
         server.send(200, "application/json", body);
 }
+
+    static void handleFirmwareUploadData() {
+        HTTPUpload& upload = server.upload();
+
+        if (upload.status == UPLOAD_FILE_START) {
+            firmware_upload_failed = false;
+            firmware_upload_status_code = 200;
+            firmware_upload_error = "";
+            firmware_uploaded_version = "";
+
+            String name = upload.filename;
+            int slash = name.lastIndexOf('/');
+            int backslash = name.lastIndexOf('\\');
+            int cut = slash > backslash ? slash : backslash;
+            if (cut >= 0) {
+                name = name.substring(cut + 1);
+            }
+
+            if (!hasFirmwareExtension(name.c_str())) {
+                firmware_upload_failed = true;
+                firmware_upload_status_code = 400;
+                firmware_upload_error = "Only .bin firmware files are supported";
+                return;
+            }
+
+            if (!Update.begin(UPDATE_SIZE_UNKNOWN)) {
+                firmware_upload_failed = true;
+                firmware_upload_status_code = 500;
+                firmware_upload_error = Update.errorString();
+                return;
+            }
+
+            firmware_uploaded_version = name;
+        } else if (upload.status == UPLOAD_FILE_WRITE) {
+            if (firmware_upload_failed) {
+                return;
+            }
+
+            size_t written = Update.write(upload.buf, upload.currentSize);
+            if (written != upload.currentSize) {
+                firmware_upload_failed = true;
+                firmware_upload_status_code = 500;
+                firmware_upload_error = Update.errorString();
+                Update.abort();
+                return;
+            }
+        } else if (upload.status == UPLOAD_FILE_END) {
+            if (firmware_upload_failed) {
+                return;
+            }
+
+            if (!Update.end(true)) {
+                firmware_upload_failed = true;
+                firmware_upload_status_code = 500;
+                firmware_upload_error = Update.errorString();
+                return;
+            }
+
+            if (!Update.isFinished()) {
+                firmware_upload_failed = true;
+                firmware_upload_status_code = 500;
+                firmware_upload_error = "Firmware update did not finish";
+                return;
+            }
+        } else if (upload.status == UPLOAD_FILE_ABORTED) {
+            firmware_upload_failed = true;
+            firmware_upload_status_code = 500;
+            firmware_upload_error = "Firmware upload aborted";
+            Update.abort();
+        }
+    }
+
+    static void handleFirmwareUploadComplete() {
+        if (firmware_upload_failed) {
+            sendJson(firmware_upload_status_code, "error", firmware_upload_error.c_str());
+            return;
+        }
+
+        firmware_reboot_pending = true;
+        firmware_reboot_at_ms = millis() + 1500;
+
+        JsonDocument resp;
+        resp["status"] = "ok";
+        resp["message"] = "Firmware uploaded. Device will reboot shortly.";
+        resp["file"] = firmware_uploaded_version;
+        sendJsonDocument(200, resp);
+    }
 
 // ─────────────────────────────────────────────
 //  POST /play   { "file": "announcement.mp3" | "announcement.wav" | "playlist.m3u" }
@@ -1772,6 +1980,7 @@ void initApiServer() {
     server.on("/files",  HTTP_GET,  handleFiles);
     server.on("/files",  HTTP_DELETE, handleDeleteFile);
     server.on("/files/upload", HTTP_POST, handleUploadFileComplete, handleUploadFileData);
+    server.on("/firmware/update", HTTP_POST, handleFirmwareUploadComplete, handleFirmwareUploadData);
     server.on("/playlist/item", HTTP_POST, handlePlaylistItem);
     server.on("/playlist/queue", HTTP_POST, handlePlaylistQueue);
     server.on("/playlist/start", HTTP_POST, handlePlaylistStart);
@@ -1790,6 +1999,11 @@ void handleApiServer() {
 
     serviceQueuedPlayback();
     server.handleClient();
+
+    if (firmware_reboot_pending && millis() >= firmware_reboot_at_ms) {
+        delay(100);
+        ESP.restart();
+    }
 }
 
 bool isApiServerRunning() {
