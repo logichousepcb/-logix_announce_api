@@ -83,6 +83,91 @@ Clicking the version number in the web UI opens the firmware update dialog. From
 - update directly to the newest tagged GitHub release binary
 - upload a local `.bin` firmware file manually
 
+## API
+
+The device exposes an HTTP API for playback control, file management, networking, version reporting, and OTA firmware updates.
+
+Base URL:
+
+```text
+http://<device-ip>
+```
+
+Full API spec:
+
+- `docs/openapi.yaml`
+
+### System Endpoints
+
+- `GET /` web UI
+- `GET /status` current playback and queue state
+- `GET /version` current firmware build version
+- `GET /network` active network status, IP, and MAC
+- `POST /network/mode` switch between `eth` and `wifi`
+- `GET /network/wifi` read saved Wi-Fi credentials
+- `POST /network/wifi` save Wi-Fi credentials
+- `POST /firmware/update` OTA firmware upload from a `.bin` file
+
+### Playback Endpoints
+
+- `POST /play` play a file from SD storage
+- `POST /stop` stop playback
+- `GET /volume` read current volume
+- `POST /volume` set volume from `0` to `100`
+
+### File Endpoints
+
+- `GET /files` list playable files and playlists on the SD card
+- `POST /files/upload` upload `.mp3`, `.wav`, `.m3u`, or `.m3u8`
+- `DELETE /files?name=<filename>` delete a file from SD storage
+
+### Playlist Endpoints
+
+- `POST /playlist/item` enable or disable a file in the queue list
+- `POST /playlist/queue` turn queued playback on or off
+- `POST /playlist/start` start queued playback
+- `GET /playlist/pause` read queue pause seconds
+- `POST /playlist/pause` set queue pause seconds
+
+### Example Requests
+
+Get device status:
+
+```bash
+curl http://<device-ip>/status
+```
+
+Switch to Ethernet:
+
+```bash
+curl -X POST http://<device-ip>/network/mode \
+	-H "Content-Type: application/json" \
+	-d '{"mode":"eth"}'
+```
+
+Play a file:
+
+```bash
+curl -X POST http://<device-ip>/play \
+	-H "Content-Type: application/json" \
+	-d '{"file":"announcement.wav"}'
+```
+
+Set volume:
+
+```bash
+curl -X POST http://<device-ip>/volume \
+	-H "Content-Type: application/json" \
+	-d '{"volume":75}'
+```
+
+Upload audio:
+
+```bash
+curl -X POST http://<device-ip>/files/upload \
+	-F "file=@announcement.wav"
+```
+
 ## Notes
 
 - For best playback performance, use uncompressed WAV files when possible
