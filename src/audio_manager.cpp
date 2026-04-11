@@ -1,7 +1,9 @@
 #include "audio_manager.h"
 #include "../include/pins.h"
 #include <Arduino.h>
+#include <AudioFileSourceICYStream.h>
 #include <AudioFileSourceHTTPStream.h>
+#include <AudioFileSourceBuffer.h>
 #include <AudioFileSourceSD.h>
 #include <AudioGenerator.h>
 #include <AudioGeneratorMP3.h>
@@ -16,12 +18,18 @@
 // ─────────────────────────────────────────────
 static AudioOutputI2S*  output  = nullptr;
 static AudioGenerator*  decoder = nullptr;
-static AudioFileSource* source  = nullptr;
-static SemaphoreHandle_t  audio_mutex = nullptr;
+static AudioFileSource*       source         = nullptr;
+static AudioFileSourceBuffer* http_buffer     = nullptr;
+static SemaphoreHandle_t      audio_mutex     = nullptr;
 static TaskHandle_t       audio_task_handle = nullptr;
 static uint8_t            volume_percent = 50;
 static volatile bool      playback_running = false;
+static volatile bool      streaming_active = false;
 static char               current_file_path[256] = "";
+static uint32_t           stream_fail_since_ms = 0;
+
+static const size_t URL_STREAM_BUFFER_BYTES = 32768;
+static const uint32_t STREAM_UNDERRUN_GRACE_MS = 1500;
 
 static bool hasExtensionIgnoreCase(const char* filename, const char* extension) {
     if (filename == nullptr || extension == nullptr) {
@@ -54,13 +62,62 @@ static AudioGenerator* createDecoderForPath(const char* path) {
         return new AudioGeneratorWAV();
     }
 
-    return nullptr;
+    // Many live stream URLs don't include a file extension.
+    // Default to MP3, which is the most common internet radio format.
+    return new AudioGeneratorMP3();
+
+}
+
+static void closeSourceLocked();
+
+static bool startUrlPlaybackLocked(const char* url) {
+    AudioFileSource* network_source = new AudioFileSourceICYStream(url);
+    if (network_source == nullptr || !network_source->isOpen()) {
+        delete network_source;
+        network_source = new AudioFileSourceHTTPStream(url);
+    }
+
+    if (network_source == nullptr || !network_source->isOpen()) {
+        delete network_source;
+        return false;
+    }
+
+    source = network_source;
+    http_buffer = new AudioFileSourceBuffer(network_source, URL_STREAM_BUFFER_BYTES);
+    if (http_buffer == nullptr) {
+        closeSourceLocked();
+        return false;
+    }
+
+    decoder = createDecoderForPath(url);
+    if (decoder == nullptr) {
+        closeSourceLocked();
+        return false;
+    }
+
+    if (!decoder->begin(http_buffer, output)) {
+        closeSourceLocked();
+        delete decoder;
+        decoder = nullptr;
+        return false;
+    }
+
+    strncpy(current_file_path, url, sizeof(current_file_path) - 1);
+    current_file_path[sizeof(current_file_path) - 1] = '\0';
+    playback_running = true;
+    streaming_active = true;
+    stream_fail_since_ms = 0;
+    return true;
 }
 
 // ─────────────────────────────────────────────
 //  Internal helpers
 // ─────────────────────────────────────────────
 static void closeSourceLocked() {
+    if (http_buffer != nullptr) {
+        delete http_buffer;
+        http_buffer = nullptr;
+    }
     if (source != nullptr) {
         delete source;
         source = nullptr;
@@ -71,6 +128,8 @@ static void stopPlaybackLocked(bool log_stop) {
     if (decoder != nullptr && decoder->isRunning()) {
         decoder->stop();
         playback_running = false;
+        streaming_active = false;
+        stream_fail_since_ms = 0;
         current_file_path[0] = '\0';
         if (log_stop) {
             //Serial.println("I2S: Stopped");
@@ -92,11 +151,43 @@ static void audioTask(void* parameter) {
         bool finished = false;
 
         if (audio_mutex != nullptr && xSemaphoreTake(audio_mutex, pdMS_TO_TICKS(20)) == pdTRUE) {
-            if (decoder != nullptr && decoder->isRunning()) {
-                if (!decoder->loop()) {
-                    decoder->stop();
+            if (decoder != nullptr) {
+                if (decoder->isRunning()) {
+                    if (decoder->loop()) {
+                        stream_fail_since_ms = 0;
+                    } else {
+                        if (streaming_active) {
+                            uint32_t now = millis();
+                            if (stream_fail_since_ms == 0) {
+                                stream_fail_since_ms = now;
+                            }
+
+                            // Brief network jitter is common for internet streams.
+                            // Keep decoder alive for a short grace window before stopping.
+                            if (now - stream_fail_since_ms < STREAM_UNDERRUN_GRACE_MS) {
+                                xSemaphoreGive(audio_mutex);
+                                vTaskDelay(pdMS_TO_TICKS(2));
+                                continue;
+                            }
+                        }
+
+                        decoder->stop();
+                        closeSourceLocked();
+                        delete decoder;
+                        decoder = nullptr;
+                        playback_running = false;
+                        streaming_active = false;
+                        stream_fail_since_ms = 0;
+                        current_file_path[0] = '\0';
+                        finished = true;
+                    }
+                } else if (playback_running) {
                     closeSourceLocked();
+                    delete decoder;
+                    decoder = nullptr;
                     playback_running = false;
+                    streaming_active = false;
+                    stream_fail_since_ms = 0;
                     current_file_path[0] = '\0';
                     finished = true;
                 }
@@ -134,7 +225,7 @@ bool initAudio() {
                                 "audioTask",
                                 6144,
                                 nullptr,
-                                1,
+                                2,
                                 &audio_task_handle,
                                 1) != pdPASS) {
         //Serial.println("I2S: Audio task create failed");
@@ -193,6 +284,7 @@ bool audioPlayFile(const char* filename) {
     strncpy(current_file_path, path, sizeof(current_file_path) - 1);
     current_file_path[sizeof(current_file_path) - 1] = '\0';
     playback_running = true;
+    streaming_active = false;
 
     xSemaphoreGive(audio_mutex);
 
@@ -279,36 +371,24 @@ bool audioPlayUrl(const char* url) {
 
     stopPlaybackLocked(false);
 
-    AudioFileSourceHTTPStream* http_source = new AudioFileSourceHTTPStream(url);
-    if (http_source == nullptr || !http_source->isOpen()) {
-        delete http_source;
-        xSemaphoreGive(audio_mutex);
-        return false;
-    }
-
-    source = http_source;
-
-    decoder = createDecoderForPath(url);
-    if (decoder == nullptr) {
-        closeSourceLocked();
-        xSemaphoreGive(audio_mutex);
-        return false;
-    }
-
-    if (!decoder->begin(source, output)) {
-        closeSourceLocked();
-        delete decoder;
-        decoder = nullptr;
-        xSemaphoreGive(audio_mutex);
-        return false;
-    }
-
-    strncpy(current_file_path, url, sizeof(current_file_path) - 1);
-    current_file_path[sizeof(current_file_path) - 1] = '\0';
-    playback_running = true;
+    bool started = startUrlPlaybackLocked(url);
 
     xSemaphoreGive(audio_mutex);
-    return true;
+    return started;
+}
+
+bool audioIsStreaming() {
+    if (audio_mutex == nullptr) {
+        return false;
+    }
+
+    if (xSemaphoreTake(audio_mutex, pdMS_TO_TICKS(50)) == pdTRUE) {
+        bool result = streaming_active && decoder != nullptr && decoder->isRunning();
+        xSemaphoreGive(audio_mutex);
+        return result;
+    }
+
+    return streaming_active;
 }
 
 void audioLoop() {

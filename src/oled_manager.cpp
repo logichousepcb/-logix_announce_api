@@ -62,7 +62,9 @@ void oledLoop() {
     }
 
     const char* audio_state;
-    if (audioIsPlaying()) {
+    if (audioIsStreaming()) {
+        audio_state = "STREAMING";
+    } else if (audioIsPlaying()) {
         audio_state = "PLAYING";
     } else if (isQueueEnabled()) {
         audio_state = "QUEUED PLAY";

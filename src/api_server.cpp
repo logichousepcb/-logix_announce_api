@@ -34,6 +34,11 @@ static size_t queued_play_index = 0;
 static uint32_t next_queue_attempt_ms = 0;
 static uint32_t queue_idle_since_ms = 0;
 static uint16_t queue_pause_seconds = 1;
+static bool url_loop_enabled = false;
+static bool url_loop_armed = false;
+static String last_stream_url = "";
+static uint32_t url_loop_idle_since_ms = 0;
+static uint32_t next_url_loop_attempt_ms = 0;
 static String last_network_mode = "eth";
 static bool last_network_connected = false;
 static String last_network_ip = "0.0.0.0";
@@ -192,6 +197,7 @@ static bool savePlaylistState() {
     JsonDocument doc;
     doc["queue_enabled"] = queued_play_enabled;
     doc["queue_pause_seconds"] = queue_pause_seconds;
+    doc["url_loop_enabled"] = url_loop_enabled;
     doc["wifi_ssid"] = getWifiSsid();
     doc["wifi_password"] = getWifiPassword();
     doc["network_mode"] = (getNetworkMode() == NETWORK_MODE_WIFI) ? "wifi" : "eth";
@@ -231,6 +237,11 @@ static void loadPlaylistState() {
     queued_play_enabled = false;
     queued_play_index = 0;
     queue_pause_seconds = 1;
+    url_loop_enabled = false;
+    url_loop_armed = false;
+    last_stream_url = "";
+    url_loop_idle_since_ms = 0;
+    next_url_loop_attempt_ms = 0;
 
     if (SD.exists(playlist_state_path)) {
         File file = SD.open(playlist_state_path, FILE_READ);
@@ -247,6 +258,7 @@ static void loadPlaylistState() {
                     loaded_pause = 180;
                 }
                 queue_pause_seconds = loaded_pause;
+                url_loop_enabled = doc["url_loop_enabled"] | false;
 
                 if (doc["wifi_ssid"].is<const char*>() || doc["wifi_password"].is<const char*>()) {
                     String saved_ssid = doc["wifi_ssid"] | "";
@@ -464,6 +476,51 @@ static void serviceQueuedPlayback() {
     next_queue_attempt_ms = now + 1500;
 }
 
+static void serviceUrlLoopPlayback() {
+    if (!url_loop_armed || last_stream_url.length() == 0) {
+        url_loop_idle_since_ms = 0;
+        return;
+    }
+
+    if (queued_play_enabled) {
+        url_loop_idle_since_ms = 0;
+        return;
+    }
+
+    uint32_t now = millis();
+
+    if (audioIsPlaying()) {
+        url_loop_idle_since_ms = 0;
+        return;
+    }
+
+    if (url_loop_idle_since_ms == 0) {
+        url_loop_idle_since_ms = now;
+        return;
+    }
+
+    uint32_t required_idle_ms = static_cast<uint32_t>(queue_pause_seconds) * 1000U;
+    if (required_idle_ms < 500U) {
+        required_idle_ms = 500U;
+    }
+
+    if (now - url_loop_idle_since_ms < required_idle_ms) {
+        return;
+    }
+
+    if (now < next_url_loop_attempt_ms) {
+        return;
+    }
+
+    if (audioPlayUrl(last_stream_url.c_str())) {
+        url_loop_idle_since_ms = 0;
+        next_url_loop_attempt_ms = now + 250;
+        return;
+    }
+
+    next_url_loop_attempt_ms = now + 1500;
+}
+
 static String formatBytes(uint64_t bytes) {
     if (bytes >= 1024ULL * 1024 * 1024) {
         char buf[16];
@@ -583,6 +640,12 @@ static void handleWebUi() {
                 <span class='pause-label'>Pause (sec)</span>
                 <input id='queuePauseSeconds' class='pause-input' type='number' min='1' max='180' value='1'>
                 <button class='btn' onclick='saveQueuePause()'>Save Pause</button>
+            </div>
+            <div class='tools' style='margin-top:10px'>
+                <input id='streamUrl' class='net-input' type='text' placeholder='http://example.com/stream.mp3' style='width: 320px;'>
+                <label class='pause-label'><input id='urlLoopEnabled' type='checkbox'> Loop URL</label>
+                <button class='btn btn-play' onclick='playUrl()'>Play URL</button>
+                <button class='btn btn-del' onclick='stopPlayback()'>Stop Playback</button>
             </div>
             <div id='status' class='status'>Loading files...</div>
 
@@ -908,6 +971,11 @@ static void handleWebUi() {
             input.value = String(seconds);
         }
 
+        function setUrlLoopCheckbox(enabled) {
+            const input = document.getElementById('urlLoopEnabled');
+            input.checked = Boolean(enabled);
+        }
+
         async function loadFiles() {
             try {
                 const res = await fetch('/files');
@@ -920,6 +988,7 @@ static void handleWebUi() {
                 rows.innerHTML = '';
                 updateQueueButton(Boolean(data.queue_enabled));
                 setQueuePauseInput(data.queue_pause_seconds || 1);
+                setUrlLoopCheckbox(Boolean(data.url_loop_enabled));
 
                 if (!data.files || data.files.length === 0) {
                     const tr = document.createElement('tr');
@@ -1033,6 +1102,51 @@ static void handleWebUi() {
                     throw new Error(data.message || 'Play failed');
                 }
                 setStatus('Playing ' + name);
+            } catch (err) {
+                setStatus('Error: ' + err.message);
+            }
+        }
+
+        async function playUrl() {
+            const url = String(document.getElementById('streamUrl').value || '').trim();
+            const loop = document.getElementById('urlLoopEnabled').checked;
+
+            if (!url) {
+                setStatus('Enter a stream URL first.');
+                return;
+            }
+
+            if (!url.startsWith('http://') && !url.startsWith('https://')) {
+                setStatus('URL must start with http:// or https://');
+                return;
+            }
+
+            try {
+                const res = await fetch('/play', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ url: url, loop: loop })
+                });
+                const data = await res.json();
+                if (!res.ok || data.status !== 'ok') {
+                    throw new Error(data.message || 'URL play failed');
+                }
+
+                setUrlLoopCheckbox(Boolean(data.url_loop_enabled));
+                setStatus('Streaming URL' + (data.url_loop_enabled ? ' (loop ON)' : ' (loop OFF)'));
+            } catch (err) {
+                setStatus('Error: ' + err.message);
+            }
+        }
+
+        async function stopPlayback() {
+            try {
+                const res = await fetch('/stop', { method: 'POST' });
+                const data = await res.json();
+                if (!res.ok || data.status !== 'ok') {
+                    throw new Error(data.message || 'Stop failed');
+                }
+                setStatus('Playback stopped.');
             } catch (err) {
                 setStatus('Error: ' + err.message);
             }
@@ -1384,19 +1498,37 @@ static void handlePlay() {
 
     const char* url = doc["url"] | "";
     if (strlen(url) > 0) {
+        bool loop_url = doc["loop"].is<bool>() ? doc["loop"].as<bool>() : url_loop_enabled;
+
         if (strncmp(url, "http://", 7) != 0 && strncmp(url, "https://", 8) != 0) {
             sendJson(400, "error", "URL must start with http:// or https://");
             return;
         }
 
+        queued_play_enabled = false;
+        queued_play_index = 0;
+        queue_idle_since_ms = 0;
+        url_loop_enabled = loop_url;
+        url_loop_armed = loop_url;
+        last_stream_url = url;
+        url_loop_idle_since_ms = 0;
+        next_url_loop_attempt_ms = 0;
+
         if (!audioPlayUrl(url)) {
+            url_loop_armed = false;
             sendJson(500, "error", "URL playback failed");
+            return;
+        }
+
+        if (!savePlaylistState()) {
+            sendJson(500, "error", "Failed to persist playlist state");
             return;
         }
 
         JsonDocument resp;
         resp["status"] = "ok";
         resp["url"] = url;
+        resp["url_loop_enabled"] = url_loop_enabled;
         String body;
         serializeJson(resp, body);
         server.send(200, "application/json", body);
@@ -1430,6 +1562,11 @@ static void handlePlay() {
     }
 
     if (hasPlaylistExtension(path)) {
+        url_loop_armed = false;
+        last_stream_url = "";
+        url_loop_idle_since_ms = 0;
+        next_url_loop_attempt_ms = 0;
+
         String playlist_error;
         if (!loadQueueFromM3uFile(path, &playlist_error)) {
             sendJson(400, "error", playlist_error.c_str());
@@ -1442,6 +1579,11 @@ static void handlePlay() {
             return;
         }
     } else {
+        url_loop_armed = false;
+        last_stream_url = "";
+        url_loop_idle_since_ms = 0;
+        next_url_loop_attempt_ms = 0;
+
         if (!audioPlayFile(filename)) {
             sendJson(500, "error", "Playback failed");
             return;
@@ -1469,6 +1611,10 @@ static void handleStop() {
     queued_play_enabled = false;
     queued_play_index = 0;
     queue_idle_since_ms = 0;
+    url_loop_armed = false;
+    last_stream_url = "";
+    url_loop_idle_since_ms = 0;
+    next_url_loop_attempt_ms = 0;
     savePlaylistState();
     sendJson(200, "ok", "Stopped");
     //Serial.println("API: Stop request");
@@ -1490,6 +1636,8 @@ static void handleStatus() {
     doc["queue_enabled"] = queued_play_enabled;
     doc["active_count"] = active_playlist_count;
     doc["queue_pause_seconds"] = queue_pause_seconds;
+    doc["url_loop_enabled"] = url_loop_enabled;
+    doc["url_loop_armed"] = url_loop_armed;
     String body;
     serializeJson(doc, body);
     server.send(200, "application/json", body);
@@ -1918,6 +2066,7 @@ static void handleFiles() {
     doc["queue_enabled"] = queued_play_enabled;
     doc["active_count"] = active_playlist_count;
     doc["queue_pause_seconds"] = queue_pause_seconds;
+    doc["url_loop_enabled"] = url_loop_enabled;
     JsonArray files = doc["files"].to<JsonArray>();
     int count = 0;
 
@@ -2021,6 +2170,7 @@ void handleApiServer() {
     }
 
     serviceQueuedPlayback();
+    serviceUrlLoopPlayback();
     server.handleClient();
 
     if (firmware_reboot_pending && millis() >= firmware_reboot_at_ms) {
