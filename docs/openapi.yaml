@@ -28,7 +28,7 @@ paths:
   /play:
     post:
       tags: [Playback]
-      summary: Play an audio file from SD storage
+      summary: Play an audio file from SD storage or stream from URL
       operationId: playFile
       requestBody:
         required: true
@@ -43,6 +43,14 @@ paths:
               playWav:
                 value:
                   file: announcement.wav
+              playUrlOnce:
+                value:
+                  url: http://ice1.somafm.com/groovesalad-128-mp3
+                  loop: false
+              playUrlLoop:
+                value:
+                  url: http://ice1.somafm.com/groovesalad-128-mp3
+                  loop: true
       responses:
         '200':
           description: Playback started
@@ -55,6 +63,11 @@ paths:
                   value:
                     status: ok
                     file: announcement.mp3
+                urlOk:
+                  value:
+                    status: ok
+                    url: http://ice1.somafm.com/groovesalad-128-mp3
+                    url_loop_enabled: true
         '400':
           description: Invalid request payload
           content:
@@ -73,11 +86,15 @@ paths:
                 missingFile:
                   value:
                     status: error
-                    message: Missing 'file' field
+                    message: Missing 'file' or 'url' field
                 invalidFilename:
                   value:
                     status: error
                     message: Invalid filename
+                invalidUrl:
+                  value:
+                    status: error
+                    message: URL must start with http:// or https://
         '404':
           description: Requested file not found on SD card
           content:
@@ -100,6 +117,10 @@ paths:
                   value:
                     status: error
                     message: Playback failed
+                urlPlaybackFailed:
+                  value:
+                    status: error
+                    message: URL playback failed
 
   /stop:
     post:
@@ -140,14 +161,18 @@ paths:
                     volume: 50
                     audio_file_label: '---'
                     queue_pause_seconds: 5
+                    url_loop_enabled: false
+                    url_loop_armed: false
                 active:
                   value:
                     status: ok
                     playing: true
-                    audio_state: PLAYING
+                    audio_state: STREAMING
                     volume: 80
-                    audio_file_label: announcement.wav
+                    audio_file_label: http://ice1.somafm.com/groovesalad-128-mp3
                     queue_pause_seconds: 5
+                    url_loop_enabled: true
+                    url_loop_armed: true
 
   /version:
     get:
@@ -427,7 +452,7 @@ paths:
   /files:
     get:
       tags: [System]
-      summary: List playable MP3/WAV files from SD root
+      summary: List playable MP3/WAV/M3U/M3U8 files from SD root
       operationId: listFiles
       responses:
         '200':
@@ -443,9 +468,16 @@ paths:
                     files:
                       - name: announcement.mp3
                         size: 346112
+                        is_playlist: false
+                        active: true
+                        queue_selectable: true
                       - name: chime.wav
                         size: 102400
+                        is_playlist: false
+                        active: false
+                        queue_selectable: true
                     count: 2
+                    url_loop_enabled: false
         '500':
           description: SD root could not be opened
           content:
@@ -460,7 +492,7 @@ paths:
 
     delete:
       tags: [System]
-      summary: Delete an audio file (.mp3 or .wav) from SD root
+      summary: Delete an audio or playlist file (.mp3, .wav, .m3u, .m3u8) from SD root
       operationId: deleteFile
       parameters:
         - in: query
@@ -499,7 +531,7 @@ paths:
                 invalidType:
                   value:
                     status: error
-                    message: Only .mp3 or .wav files are supported
+                    message: Only .mp3, .wav, .m3u or .m3u8 files are supported
         '404':
           description: File not found
           content:
@@ -526,7 +558,7 @@ paths:
   /files/upload:
     post:
       tags: [System]
-      summary: Upload an audio file (.mp3 or .wav) to SD root
+      summary: Upload an audio or playlist file (.mp3, .wav, .m3u, .m3u8) to SD root
       operationId: uploadFile
       requestBody:
         required: true
@@ -566,7 +598,7 @@ paths:
                 invalidType:
                   value:
                     status: error
-                    message: Only .mp3 or .wav files are supported
+                    message: Only .mp3, .wav, .m3u or .m3u8 files are supported
         '500':
           description: Upload failed
           content:
@@ -858,8 +890,6 @@ components:
   schemas:
     PlayRequest:
       type: object
-      required:
-        - file
       properties:
         file:
           type: string
@@ -867,19 +897,37 @@ components:
             Audio filename or path. The firmware rejects path traversal attempts
             containing `..` and normalizes missing leading `/`.
           minLength: 1
+        url:
+          type: string
+          description: HTTP or HTTPS stream URL.
+          minLength: 1
+        loop:
+          type: boolean
+          description: If true when `url` is provided, URL playback will auto-restart after `queue_pause_seconds`.
+      anyOf:
+        - required: [file]
+        - required: [url]
       additionalProperties: false
 
     PlaySuccessResponse:
       type: object
       required:
         - status
-        - file
       properties:
         status:
           type: string
           enum: [ok]
         file:
           type: string
+        url:
+          type: string
+        queue_enabled:
+          type: boolean
+        active_count:
+          type: integer
+          minimum: 0
+        url_loop_enabled:
+          type: boolean
 
     StatusMessageResponse:
       type: object
@@ -904,6 +952,8 @@ components:
         - queue_enabled
         - active_count
         - queue_pause_seconds
+        - url_loop_enabled
+        - url_loop_armed
       properties:
         status:
           type: string
@@ -912,7 +962,7 @@ components:
           type: boolean
         audio_state:
           type: string
-          enum: [PLAYING, QUEUED PLAY, STOPPED]
+          enum: [STREAMING, PLAYING, QUEUED PLAY, STOPPED]
         volume:
           type: integer
           minimum: 0
@@ -929,6 +979,10 @@ components:
           type: integer
           minimum: 1
           maximum: 180
+        url_loop_enabled:
+          type: boolean
+        url_loop_armed:
+          type: boolean
 
     VolumeRequest:
       type: object
@@ -972,7 +1026,9 @@ components:
       required:
         - name
         - size
+        - is_playlist
         - active
+        - queue_selectable
       properties:
         name:
           type: string
@@ -980,7 +1036,11 @@ components:
           type: integer
           format: int64
           minimum: 0
+        is_playlist:
+          type: boolean
         active:
+          type: boolean
+        queue_selectable:
           type: boolean
 
     FilesResponse:
@@ -990,6 +1050,7 @@ components:
         - queue_enabled
         - active_count
         - queue_pause_seconds
+        - url_loop_enabled
         - files
         - count
       properties:
@@ -1005,6 +1066,8 @@ components:
           type: integer
           minimum: 1
           maximum: 180
+        url_loop_enabled:
+          type: boolean
         files:
           type: array
           items:

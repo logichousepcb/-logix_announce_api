@@ -37,6 +37,8 @@ The device enclosure is a two-piece 3D-printed case designed to hold the announc
 
 - Upload and manage `.mp3`, `.wav`, `.m3u`, and `.m3u8` files from the web UI
 - Queue files and playlists for playback
+- Play audio directly from HTTP/HTTPS URL streams
+- Optional URL looping that uses the same Pause (sec) setting as queued playback
 - Show MAC address, IP address, SD usage, and queue state in the browser
 - Switch between Ethernet and Wi-Fi modes from the UI
 - Save Wi-Fi credentials on the device
@@ -94,6 +96,22 @@ Clicking the version number in the web UI opens the firmware update dialog. From
 - update directly to the newest tagged GitHub release binary
 - upload a local `.bin` firmware file manually
 
+## URL Playback
+
+URL playback can be started from the web UI or through `POST /play`.
+
+From the web UI:
+
+- enter a full stream URL (must start with `http://` or `https://`)
+- click `Play URL` to start streaming
+- enable `Loop URL` if you want automatic restart after playback ends
+- click `Stop Playback` to stop all playback types (file, queued, and URL loop)
+
+Loop behavior:
+
+- when `Loop URL` is enabled, URL playback restarts after the configured `Pause (sec)` delay
+- the delay is shared with queued playback and is configured from `Save Pause`
+
 ## API
 
 The device exposes an HTTP API for playback control, file management, networking, version reporting, and OTA firmware updates.
@@ -121,7 +139,7 @@ Full API spec:
 
 ### Playback Endpoints
 
-- `POST /play` play a file from SD storage
+- `POST /play` play a file from SD storage or stream from URL
 - `POST /stop` stop playback
 - `GET /volume` read current volume
 - `POST /volume` set volume from `0` to `100`
@@ -162,6 +180,28 @@ Play a file:
 curl -X POST http://<device-ip>/play \
 	-H "Content-Type: application/json" \
 	-d '{"file":"announcement.wav"}'
+```
+
+Play a URL stream once:
+
+```bash
+curl -X POST http://<device-ip>/play \
+	-H "Content-Type: application/json" \
+	-d '{"url":"http://ice1.somafm.com/groovesalad-128-mp3","loop":false}'
+```
+
+Play a URL stream with looping enabled:
+
+```bash
+curl -X POST http://<device-ip>/play \
+	-H "Content-Type: application/json" \
+	-d '{"url":"http://ice1.somafm.com/groovesalad-128-mp3","loop":true}'
+```
+
+Stop playback:
+
+```bash
+curl -X POST http://<device-ip>/stop
 ```
 
 Set volume:
