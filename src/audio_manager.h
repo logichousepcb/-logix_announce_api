@@ -3,7 +3,7 @@
 
 bool initAudio();
 bool audioPlayFile(const char* filename);  // filename only, e.g. "beep.mp3" or "beep.wav"
-bool audioPlayUrl(const char* url);        // http:// or https:// URL
+bool audioPlayUrl(const char* url, bool buffered = false); // http:// or https:// URL. Use buffered=true for live streams.
 void audioStop();
 bool audioIsPlaying();
 bool audioIsStreaming();                       // true when playing a URL stream

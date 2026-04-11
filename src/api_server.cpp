@@ -512,7 +512,7 @@ static void serviceUrlLoopPlayback() {
         return;
     }
 
-    if (audioPlayUrl(last_stream_url.c_str())) {
+    if (audioPlayUrl(last_stream_url.c_str(), url_loop_enabled)) {
         url_loop_idle_since_ms = 0;
         next_url_loop_attempt_ms = now + 250;
         return;
@@ -1514,7 +1514,7 @@ static void handlePlay() {
         url_loop_idle_since_ms = 0;
         next_url_loop_attempt_ms = 0;
 
-        if (!audioPlayUrl(url)) {
+        if (!audioPlayUrl(url, loop_url)) {
             url_loop_armed = false;
             sendJson(500, "error", "URL playback failed");
             return;

@@ -3,14 +3,22 @@
 from __future__ import annotations
 
 from typing import Any
+from urllib.parse import urljoin
 
 import voluptuous as vol
 
-from homeassistant.components.media_player import MediaPlayerEntity, MediaPlayerEntityFeature
+from homeassistant.components import media_source
+from homeassistant.components.media_player import (
+    MediaPlayerEntity,
+    MediaPlayerEntityFeature,
+    async_process_play_media_url,
+)
 from homeassistant.components.media_player.const import MediaPlayerState, MediaType
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import CONF_HOST
 from homeassistant.core import HomeAssistant
+from homeassistant.exceptions import HomeAssistantError
+from homeassistant.helpers.network import NoURLAvailableError, get_url
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers import entity_platform
@@ -18,6 +26,8 @@ from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .const import DOMAIN, MANUFACTURER, MODEL
 from .coordinator import LogixAnnounceDataUpdateCoordinator
+
+SUPPORTED_FILE_EXTENSIONS = (".mp3", ".wav", ".m3u", ".m3u8")
 
 
 async def async_setup_entry(
@@ -173,10 +183,46 @@ class LogixAnnounceMediaPlayer(CoordinatorEntity[LogixAnnounceDataUpdateCoordina
     ) -> None:
         """Play either a URL stream or SD file by media_id."""
         loop = bool(kwargs.get("extra", {}).get("loop", False))
-        if media_id.startswith("http://") or media_id.startswith("https://"):
-            await self._api.async_play_url(media_id, loop=loop)
+
+        processed_media_id = media_id
+
+        if processed_media_id.startswith("media-source://"):
+            resolved = await media_source.async_resolve_media(self.hass, processed_media_id)
+            processed_media_id = resolved.url
+
+        processed_media_id = async_process_play_media_url(self.hass, processed_media_id)
+
+        if processed_media_id.startswith("http://") or processed_media_id.startswith("https://"):
+            await self._api.async_play_url(processed_media_id, loop=loop)
+        elif processed_media_id.startswith("/"):
+            try:
+                base_url = get_url(self.hass, prefer_external=False)
+            except NoURLAvailableError as err:
+                raise HomeAssistantError(
+                    "No internal Home Assistant URL is configured for TTS/media playback"
+                ) from err
+
+            await self._api.async_play_url(urljoin(base_url, processed_media_id), loop=loop)
+        elif "/" in processed_media_id and processed_media_id.lower().startswith(("api/", "local/", "media/")):
+            try:
+                base_url = get_url(self.hass, prefer_external=False)
+            except NoURLAvailableError as err:
+                raise HomeAssistantError(
+                    "No internal Home Assistant URL is configured for TTS/media playback"
+                ) from err
+
+            await self._api.async_play_url(urljoin(base_url + "/", processed_media_id), loop=loop)
+        elif processed_media_id.lower().endswith(SUPPORTED_FILE_EXTENSIONS):
+            await self._api.async_play_file(processed_media_id)
         else:
-            await self._api.async_play_file(media_id)
+            try:
+                base_url = get_url(self.hass, prefer_external=False)
+            except NoURLAvailableError as err:
+                raise HomeAssistantError(
+                    "No internal Home Assistant URL is configured for TTS/media playback"
+                ) from err
+
+            await self._api.async_play_url(urljoin(base_url + "/", processed_media_id), loop=loop)
         await self.coordinator.async_request_refresh()
 
     async def async_select_source(self, source: str) -> None:

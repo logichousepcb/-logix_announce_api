@@ -70,11 +70,27 @@ static AudioGenerator* createDecoderForPath(const char* path) {
 
 static void closeSourceLocked();
 
-static bool startUrlPlaybackLocked(const char* url) {
-    AudioFileSource* network_source = new AudioFileSourceICYStream(url);
-    if (network_source == nullptr || !network_source->isOpen()) {
-        delete network_source;
-        network_source = new AudioFileSourceHTTPStream(url);
+static bool startUrlPlaybackLocked(const char* url, bool buffered) {
+    AudioFileSource* network_source = nullptr;
+
+    if (buffered) {
+        // Buffered mode is intended for long-running internet radio streams.
+        network_source = new AudioFileSourceICYStream(url);
+        if (network_source == nullptr || !network_source->isOpen()) {
+            delete network_source;
+            network_source = new AudioFileSourceHTTPStream(url);
+        }
+    } else {
+        // For finite HTTP media (TTS/proxy files), HTTP/1.0 helps guarantee EOF.
+        AudioFileSourceHTTPStream* http_source = new AudioFileSourceHTTPStream();
+        if (http_source != nullptr) {
+            http_source->useHTTP10();
+            if (http_source->open(url)) {
+                network_source = http_source;
+            } else {
+                delete http_source;
+            }
+        }
     }
 
     if (network_source == nullptr || !network_source->isOpen()) {
@@ -83,11 +99,6 @@ static bool startUrlPlaybackLocked(const char* url) {
     }
 
     source = network_source;
-    http_buffer = new AudioFileSourceBuffer(network_source, URL_STREAM_BUFFER_BYTES);
-    if (http_buffer == nullptr) {
-        closeSourceLocked();
-        return false;
-    }
 
     decoder = createDecoderForPath(url);
     if (decoder == nullptr) {
@@ -95,7 +106,20 @@ static bool startUrlPlaybackLocked(const char* url) {
         return false;
     }
 
-    if (!decoder->begin(http_buffer, output)) {
+    AudioFileSource* decode_source = network_source;
+    if (buffered) {
+        // Use a large pre-fill buffer for smooth live-stream playback.
+        http_buffer = new AudioFileSourceBuffer(network_source, URL_STREAM_BUFFER_BYTES);
+        if (http_buffer == nullptr) {
+            closeSourceLocked();
+            delete decoder;
+            decoder = nullptr;
+            return false;
+        }
+        decode_source = http_buffer;
+    }
+
+    if (!decoder->begin(decode_source, output)) {
         closeSourceLocked();
         delete decoder;
         decoder = nullptr;
@@ -354,7 +378,7 @@ uint8_t audioGetVolume() {
     return current;
 }
 
-bool audioPlayUrl(const char* url) {
+bool audioPlayUrl(const char* url, bool buffered) {
     if (audio_mutex == nullptr || output == nullptr) {
         return false;
     }
@@ -371,7 +395,7 @@ bool audioPlayUrl(const char* url) {
 
     stopPlaybackLocked(false);
 
-    bool started = startUrlPlaybackLocked(url);
+    bool started = startUrlPlaybackLocked(url, buffered);
 
     xSemaphoreGive(audio_mutex);
     return started;

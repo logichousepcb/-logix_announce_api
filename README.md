@@ -134,6 +134,48 @@ This repository now includes a Home Assistant custom integration for the announc
 - Supports play/stop/volume control
 - Supports selecting SD audio files as sources
 - Supports URL playback by calling `media_player.play_media` with an `http://` or `https://` media ID
+- Supports Home Assistant `media-source://` IDs (including TTS/media browser items) by resolving to a playable URL
+- For Home Assistant-relative paths (for example `/api/tts_proxy/...`), the integration builds an absolute URL from your HA internal URL and streams it on the device
+
+### Recommended Home Assistant Settings
+
+- Set **Settings -> System -> Network -> Home Assistant URL -> Internal URL** (required for TTS/media-source playback)
+- Keep device and Home Assistant on the same LAN/VLAN when possible
+- If you use HTTPS with a local certificate, ensure the URL is reachable by the ESP32 device
+
+### Service Examples
+
+Play a URL stream (no loop):
+
+```yaml
+service: logix_announce.play_url
+target:
+	entity_id: media_player.logix_announcer_192_168_22_124_player
+data:
+	url: https://example.com/stream.mp3
+	loop: false
+```
+
+Play an SD file:
+
+```yaml
+service: logix_announce.play_file
+target:
+	entity_id: media_player.logix_announcer_192_168_22_124_player
+data:
+	file: chime.mp3
+```
+
+Play TTS through standard `media_player.play_media`:
+
+```yaml
+service: media_player.play_media
+target:
+	entity_id: media_player.logix_announcer_192_168_22_124_player
+data:
+	media_content_type: music
+	media_content_id: media-source://tts/tts.google_translate_en_com?message=Hello+from+Logix
+```
 
 ### Custom Services
 
@@ -145,6 +187,18 @@ The integration also provides entity services:
 	- fields: `file` (required)
 
 These services target the integration `media_player` entity.
+
+### Troubleshooting
+
+- Entity missing/unavailable at startup:
+	- confirm the device responds at `http://<device-ip>/status`
+	- verify host/IP in the integration config entry
+- TTS or media-source fails:
+	- set Home Assistant Internal URL
+	- make sure HA can resolve the media source and the device can reach HA over the network
+- Stream appears to continue after message ends:
+	- update to latest firmware release from this repository
+	- ensure URL loop is disabled unless you explicitly want replay behavior
 
 ## API
 
