@@ -1,0 +1,30 @@
+play_url:
+  name: Play URL
+  description: Start URL stream playback on the Logix Message Announcer.
+  target:
+    entity:
+      integration: logix_announce
+      domain: media_player
+  fields:
+    url:
+      required: true
+      selector:
+        text:
+    loop:
+      required: false
+      default: false
+      selector:
+        boolean:
+
+play_file:
+  name: Play File
+  description: Start SD file playback on the Logix Message Announcer.
+  target:
+    entity:
+      integration: logix_announce
+      domain: media_player
+  fields:
+    file:
+      required: true
+      selector:
+        text:

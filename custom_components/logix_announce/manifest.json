@@ -1,0 +1,11 @@
+{
+  "domain": "logix_announce",
+  "name": "Logix Message Announcer",
+  "version": "1.0.0",
+  "codeowners": [],
+  "config_flow": true,
+  "documentation": "https://github.com/logichousepcb/-logix_announce_api",
+  "integration_type": "device",
+  "iot_class": "local_polling",
+  "requirements": []
+}

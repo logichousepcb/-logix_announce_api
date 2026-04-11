@@ -112,6 +112,40 @@ Loop behavior:
 - when `Loop URL` is enabled, URL playback restarts after the configured `Pause (sec)` delay
 - the delay is shared with queued playback and is configured from `Save Pause`
 
+## Home Assistant Custom Component
+
+This repository now includes a Home Assistant custom integration for the announcer device:
+
+- path: `custom_components/logix_announce`
+- domain: `logix_announce`
+- platform: `media_player`
+
+### Install
+
+1. Copy `custom_components/logix_announce` into your Home Assistant config directory under `custom_components/`.
+2. Restart Home Assistant.
+3. Go to **Settings -> Devices & Services -> Add Integration**.
+4. Search for **Logix Message Announcer**.
+5. Enter the device host/IP and optional scan interval.
+
+### Entity Behavior
+
+- Creates one `media_player` entity for the device
+- Supports play/stop/volume control
+- Supports selecting SD audio files as sources
+- Supports URL playback by calling `media_player.play_media` with an `http://` or `https://` media ID
+
+### Custom Services
+
+The integration also provides entity services:
+
+- `logix_announce.play_url`
+	- fields: `url` (required), `loop` (optional, default `false`)
+- `logix_announce.play_file`
+	- fields: `file` (required)
+
+These services target the integration `media_player` entity.
+
 ## API
 
 The device exposes an HTTP API for playback control, file management, networking, version reporting, and OTA firmware updates.
