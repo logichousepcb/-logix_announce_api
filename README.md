@@ -89,6 +89,14 @@ platformio device monitor
 - successful builds export a versioned binary into `releases/`
 - git tags such as `v1.079` are used for published firmware releases
 
+## Changelog
+
+### v1.102
+
+- Added hidden GPIO2 long-press factory reset (hold to GND for 10 seconds).
+- OLED displays FACTORY RESET when triggered.
+- Reset clears saved Wi-Fi credentials, disables required Web UI login, then reboots.
+
 ## Web UI Firmware Updates
 
 Clicking the version number in the web UI opens the firmware update dialog. From there you can:
