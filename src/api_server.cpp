@@ -2379,3 +2379,18 @@ bool isApiServerRunning() {
 bool isQueueEnabled() {
     return queued_play_enabled;
 }
+
+void factoryResetCredentials() {
+    // Reset web UI auth to defaults and disable the requirement
+    device_username = "logix";
+    device_password = "logix";
+    webui_auth_enabled = false;
+    saveDeviceCredentialsToPrefs();
+
+    // Clear WiFi credentials and switch back to Ethernet
+    setWifiCredentials("", "");
+    setNetworkMode(NETWORK_MODE_ETH);
+
+    // Persist cleared network state to SD
+    savePlaylistState();
+}

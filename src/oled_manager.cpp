@@ -19,6 +19,7 @@ static const uint32_t OLED_REFRESH_MS = 500;
 static Adafruit_SSD1306 oled(OLED_WIDTH, OLED_HEIGHT, &Wire, -1);
 static bool oled_ready = false;
 static uint32_t last_draw_ms = 0;
+static bool factory_reset_override = false;
 }
 
 bool initOled() {
@@ -47,6 +48,10 @@ bool initOled() {
 
 void oledLoop() {
     if (!oled_ready) {
+        return;
+    }
+
+    if (factory_reset_override) {
         return;
     }
 
@@ -91,5 +96,19 @@ void oledLoop() {
     oled.print(volume);
     oled.println("%");
     oled.println(file_label[0] ? file_label : "---");
+    oled.display();
+}
+
+void oledShowFactoryReset() {
+    factory_reset_override = true;
+    if (!oled_ready) {
+        return;
+    }
+    oled.clearDisplay();
+    oled.setTextSize(2);
+    oled.setCursor(4, 14);
+    oled.println("FACTORY");
+    oled.setCursor(16, 38);
+    oled.println("RESET");
     oled.display();
 }

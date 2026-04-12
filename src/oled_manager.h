@@ -2,3 +2,4 @@
 
 bool initOled();
 void oledLoop();
+void oledShowFactoryReset();

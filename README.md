@@ -194,6 +194,7 @@ These services target the integration `media_player` entity.
 - Entity missing/unavailable at startup:
 	- confirm the device responds at `http://<device-ip>/status`
 	- verify host/IP in the integration config entry
+- Jumping pin 1 and 2 on CN4 for 10 seconds will factory reset the device and allow access via ethernet in case the username and password are lost.
 - TTS or media-source fails:
 	- set Home Assistant Internal URL
 	- make sure HA can resolve the media source and the device can reach HA over the network
