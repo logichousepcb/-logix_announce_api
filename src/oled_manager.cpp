@@ -65,6 +65,14 @@ void oledLoop() {
     if (ip.length() == 0 || ip == "0.0.0.0") {
         ip = "N/A";
     }
+    bool show_mac = (ip == "N/A");
+    String mac = "";
+    if (show_mac) {
+        mac = getNetworkMacAddress();
+        if (mac.length() == 0) {
+            mac = "N/A";
+        }
+    }
 
     const char* audio_state;
     if (audioIsStreaming()) {
@@ -92,6 +100,9 @@ void oledLoop() {
     oled.println(ip);
     oled.print("AUDIO: ");
     oled.println(audio_state);
+    if (show_mac) {
+        oled.println(mac);
+    }
     oled.print("VOL: ");
     oled.print(volume);
     oled.println("%");
