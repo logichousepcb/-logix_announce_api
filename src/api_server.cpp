@@ -6,6 +6,7 @@
 #include <Update.h>
 #include <WebServer.h>
 #include <ArduinoJson.h>
+#include <Preferences.h>
 #include <SD.h>
 #include <ctype.h>
 
@@ -43,6 +44,13 @@ static String last_network_mode = "eth";
 static bool last_network_connected = false;
 static String last_network_ip = "0.0.0.0";
 static String last_network_mac = "";
+static String device_username = "logix";
+static String device_password = "logix";
+static bool webui_auth_enabled = true;
+static const char* prefs_namespace = "logix_api";
+static const char* prefs_user_key = "ui_user";
+static const char* prefs_pass_key = "ui_pass";
+static const char* prefs_auth_enabled_key = "ui_auth_en";
 
 // ─────────────────────────────────────────────
 //  Helpers
@@ -180,6 +188,54 @@ static void updateLastNetworkSnapshot() {
     last_network_connected = isNetworkConnected();
     last_network_ip = getNetworkIpAddress();
     last_network_mac = getNetworkMacAddress();
+}
+
+static void normalizeDeviceUsername(String& username) {
+    username.trim();
+    if (username.length() == 0) {
+        username = "logix";
+    }
+    if (username.length() > 8) {
+        username = username.substring(0, 8);
+    }
+}
+
+static bool loadDeviceCredentialsFromPrefs() {
+    Preferences prefs;
+    if (!prefs.begin(prefs_namespace, true)) {
+        device_username = "logix";
+        device_password = "logix";
+        webui_auth_enabled = true;
+        return false;
+    }
+
+    String loaded_user = prefs.getString(prefs_user_key, "logix");
+    String loaded_pass = prefs.getString(prefs_pass_key, "logix");
+    bool loaded_auth_enabled = prefs.getBool(prefs_auth_enabled_key, true);
+    prefs.end();
+
+    normalizeDeviceUsername(loaded_user);
+    if (loaded_pass.length() == 0) {
+        loaded_pass = "logix";
+    }
+
+    device_username = loaded_user;
+    device_password = loaded_pass;
+    webui_auth_enabled = loaded_auth_enabled;
+    return true;
+}
+
+static bool saveDeviceCredentialsToPrefs() {
+    Preferences prefs;
+    if (!prefs.begin(prefs_namespace, false)) {
+        return false;
+    }
+
+    prefs.putString(prefs_user_key, device_username);
+    prefs.putString(prefs_pass_key, device_password);
+    prefs.putBool(prefs_auth_enabled_key, webui_auth_enabled);
+    prefs.end();
+    return true;
 }
 
 static bool savePlaylistState() {
@@ -533,6 +589,11 @@ static String formatBytes(uint64_t bytes) {
 }
 
 static void handleWebUi() {
+    if (webui_auth_enabled && !server.authenticate(device_username.c_str(), device_password.c_str())) {
+        server.requestAuthentication(BASIC_AUTH, "Logix Announcer");
+        return;
+    }
+
     String mac = getNetworkMacAddress();
     String ip = getNetworkIpAddress();
     String mode = getNetworkModeString();
@@ -626,6 +687,12 @@ static void handleWebUi() {
                         <input id='wifiSsid' class='net-input' type='text' placeholder='WiFi Username (SSID)'>
                         <input id='wifiPassword' class='net-input' type='password' placeholder='WiFi Password'>
                         <button class='btn' onclick='saveWifiConfig()'>Save WiFi</button>
+                    </div>
+                    <div class='tools' style='margin-top:8px'>
+                        <input id='deviceUsername' class='net-input' type='text' maxlength='8' placeholder='User (max 8)'>
+                        <input id='devicePassword' class='net-input' type='password' placeholder='Password'>
+                        <label class='pause-label'><input id='webUiAuthEnabled' type='checkbox'> Require Web UI Login</label>
+                        <button class='btn' onclick='saveDeviceCredentials()'>Save User/Pass</button>
                     </div>
                 </div>
             </div>
@@ -940,6 +1007,57 @@ static void handleWebUi() {
             }
         }
 
+        async function loadDeviceCredentials() {
+            try {
+                const res = await fetch('/network/auth');
+                const data = await res.json();
+                if (res.ok && data.status === 'ok') {
+                    document.getElementById('deviceUsername').value = data.username || 'logix';
+                    document.getElementById('devicePassword').value = data.password || 'logix';
+                    document.getElementById('webUiAuthEnabled').checked = data.webui_auth_enabled !== false;
+                }
+            } catch (_) {
+                // Ignore fetch errors here, user can still enter values manually.
+            }
+        }
+
+        async function saveDeviceCredentials() {
+            const usernameInput = document.getElementById('deviceUsername');
+            const passwordInput = document.getElementById('devicePassword');
+            const authEnabledInput = document.getElementById('webUiAuthEnabled');
+            const username = String(usernameInput.value || '').trim();
+            const password = String(passwordInput.value || '');
+            const webuiAuthEnabled = Boolean(authEnabledInput.checked);
+
+            if (!username || username.length > 8) {
+                setStatus('Username is required and must be 8 characters or less.');
+                return;
+            }
+
+            if (!password) {
+                setStatus('Password is required.');
+                return;
+            }
+
+            try {
+                const res = await fetch('/network/auth', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ username: username, password: password, webui_auth_enabled: webuiAuthEnabled })
+                });
+                const data = await res.json();
+                if (!res.ok || data.status !== 'ok') {
+                    throw new Error(data.message || 'Failed to save device credentials');
+                }
+                usernameInput.value = data.username || username;
+                passwordInput.value = data.password || password;
+                authEnabledInput.checked = data.webui_auth_enabled !== false;
+                setStatus('Device user/password saved.');
+            } catch (err) {
+                setStatus('Error: ' + err.message);
+            }
+        }
+
         async function applyNetworkMode() {
             const mode = document.getElementById('networkMode').value;
             try {
@@ -1243,6 +1361,7 @@ static void handleWebUi() {
 
         loadNetworkMode();
         loadWifiConfig();
+        loadDeviceCredentials();
         loadFiles();
         loadRepoVersionStatus();
         document.getElementById('firmwareVersion').addEventListener('click', handleVersionClick);
@@ -1773,6 +1892,77 @@ static void handleSetWifiConfig() {
 }
 
 // ─────────────────────────────────────────────
+//  GET /network/auth
+// ─────────────────────────────────────────────
+static void handleGetDeviceCredentials() {
+    JsonDocument resp;
+    resp["status"] = "ok";
+    resp["username"] = device_username;
+    resp["password"] = device_password;
+    resp["webui_auth_enabled"] = webui_auth_enabled;
+    String body;
+    serializeJson(resp, body);
+    server.send(200, "application/json", body);
+}
+
+// ─────────────────────────────────────────────
+//  POST /network/auth  { "username": "...", "password": "..." }
+// ─────────────────────────────────────────────
+static void handleSetDeviceCredentials() {
+    if (!server.hasArg("plain")) {
+        sendJson(400, "error", "No JSON body");
+        return;
+    }
+
+    JsonDocument doc;
+    DeserializationError err = deserializeJson(doc, server.arg("plain"));
+    if (err) {
+        sendJson(400, "error", "Invalid JSON");
+        return;
+    }
+
+    if (!doc["username"].is<const char*>() || !doc["password"].is<const char*>()) {
+        sendJson(400, "error", "Missing or invalid username/password fields");
+        return;
+    }
+
+    String requested_username = doc["username"].as<String>();
+    normalizeDeviceUsername(requested_username);
+    if (requested_username.length() == 0 || requested_username.length() > 8) {
+        sendJson(400, "error", "Username must be 1 to 8 characters");
+        return;
+    }
+
+    String requested_password = doc["password"].as<String>();
+    if (requested_password.length() == 0) {
+        sendJson(400, "error", "Password is required");
+        return;
+    }
+
+    bool requested_auth_enabled = doc["webui_auth_enabled"].is<bool>()
+        ? doc["webui_auth_enabled"].as<bool>()
+        : webui_auth_enabled;
+
+    device_username = requested_username;
+    device_password = requested_password;
+    webui_auth_enabled = requested_auth_enabled;
+
+    if (!saveDeviceCredentialsToPrefs()) {
+        sendJson(500, "error", "Failed to persist device credentials");
+        return;
+    }
+
+    JsonDocument resp;
+    resp["status"] = "ok";
+    resp["username"] = device_username;
+    resp["password"] = device_password;
+    resp["webui_auth_enabled"] = webui_auth_enabled;
+    String body;
+    serializeJson(resp, body);
+    server.send(200, "application/json", body);
+}
+
+// ─────────────────────────────────────────────
 //  GET /playlist/pause
 // ─────────────────────────────────────────────
 static void handlePlaylistPauseGet() {
@@ -2136,6 +2326,7 @@ void initApiServer() {
     }
 
     loadPlaylistState();
+    loadDeviceCredentialsFromPrefs();
 
     // Keep docs/openapi.yaml and docs/api_sync_checklist.md aligned with route changes.
     server.on("/",      HTTP_GET,  handleWebUi);
@@ -2147,6 +2338,8 @@ void initApiServer() {
     server.on("/network/mode", HTTP_POST, handleSetNetworkMode);
     server.on("/network/wifi", HTTP_GET, handleGetWifiConfig);
     server.on("/network/wifi", HTTP_POST, handleSetWifiConfig);
+    server.on("/network/auth", HTTP_GET, handleGetDeviceCredentials);
+    server.on("/network/auth", HTTP_POST, handleSetDeviceCredentials);
     server.on("/version", HTTP_GET, handleVersion);
     server.on("/status", HTTP_GET,  handleStatus);
     server.on("/files",  HTTP_GET,  handleFiles);
