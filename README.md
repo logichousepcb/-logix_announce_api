@@ -119,6 +119,7 @@ This repository now includes a Home Assistant custom integration for the announc
 - path: `custom_components/logix_announce`
 - domain: `logix_announce`
 - platform: `media_player`
+- bundled brand assets: `icon.png` and `logo.png` in the integration folder
 
 ### Install
 

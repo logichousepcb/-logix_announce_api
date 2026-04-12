@@ -1,7 +1,7 @@
 {
   "domain": "logix_announce",
   "name": "Logix Message Announcer",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "codeowners": [],
   "config_flow": true,
   "documentation": "https://github.com/logichousepcb/-logix_announce_api",
