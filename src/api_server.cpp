@@ -714,6 +714,11 @@ static void handleWebUi() {
                 <button class='btn btn-play' onclick='playUrl()'>Play URL</button>
                 <button class='btn btn-del' onclick='stopPlayback()'>Stop Playback</button>
             </div>
+            <div class='tools' style='margin-top:10px; align-items:center;'>
+                <span class='pause-label'>Volume</span>
+                <input id='volumeSlider' type='range' min='0' max='100' value='50' style='width:180px; cursor:pointer;' oninput='document.getElementById("volumeLabel").textContent=this.value' onchange='setVolume(this.value)'>
+                <span id='volumeLabel' style='min-width:30px; text-align:right;'>50</span><span style='margin-left:2px;'>%</span>
+            </div>
             <div id='status' class='status'>Loading files...</div>
 
             <table class='table'>
@@ -1359,10 +1364,41 @@ static void handleWebUi() {
             }
         }
 
+        async function loadVolume() {
+            try {
+                const res = await fetch('/volume');
+                const data = await res.json();
+                if (res.ok && typeof data.volume === 'number') {
+                    document.getElementById('volumeSlider').value = data.volume;
+                    document.getElementById('volumeLabel').textContent = data.volume;
+                }
+            } catch (err) {
+                // non-fatal
+            }
+        }
+
+        async function setVolume(value) {
+            try {
+                const res = await fetch('/volume', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ volume: parseInt(value, 10) })
+                });
+                const data = await res.json();
+                if (res.ok && typeof data.volume === 'number') {
+                    document.getElementById('volumeSlider').value = data.volume;
+                    document.getElementById('volumeLabel').textContent = data.volume;
+                }
+            } catch (err) {
+                setStatus('Error: ' + err.message);
+            }
+        }
+
         loadNetworkMode();
         loadWifiConfig();
         loadDeviceCredentials();
         loadFiles();
+        loadVolume();
         loadRepoVersionStatus();
         document.getElementById('firmwareVersion').addEventListener('click', handleVersionClick);
     </script>
