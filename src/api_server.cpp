@@ -182,6 +182,7 @@ static bool isFileActiveInPlaylist(const String& filename) {
 
 // Forward declaration because state loading happens before the parser definition.
 static size_t parseM3uTracks(const char* playlist_path, String* out_tracks, size_t max_tracks);
+static bool saveDeviceCredentialsToPrefs();
 
 static void updateLastNetworkSnapshot() {
     last_network_mode = getNetworkModeString();
@@ -202,16 +203,36 @@ static void normalizeDeviceUsername(String& username) {
 
 static bool loadDeviceCredentialsFromPrefs() {
     Preferences prefs;
-    if (!prefs.begin(prefs_namespace, true)) {
+    if (!prefs.begin(prefs_namespace, false)) {
         device_username = "logix";
         device_password = "logix";
         webui_auth_enabled = true;
         return false;
     }
 
-    String loaded_user = prefs.getString(prefs_user_key, "logix");
-    String loaded_pass = prefs.getString(prefs_pass_key, "logix");
-    bool loaded_auth_enabled = prefs.getBool(prefs_auth_enabled_key, true);
+    String loaded_user = "logix";
+    String loaded_pass = "logix";
+    bool loaded_auth_enabled = true;
+    bool missing_keys = false;
+
+    if (prefs.isKey(prefs_user_key)) {
+        loaded_user = prefs.getString(prefs_user_key, "logix");
+    } else {
+        missing_keys = true;
+    }
+
+    if (prefs.isKey(prefs_pass_key)) {
+        loaded_pass = prefs.getString(prefs_pass_key, "logix");
+    } else {
+        missing_keys = true;
+    }
+
+    if (prefs.isKey(prefs_auth_enabled_key)) {
+        loaded_auth_enabled = prefs.getBool(prefs_auth_enabled_key, true);
+    } else {
+        missing_keys = true;
+    }
+
     prefs.end();
 
     normalizeDeviceUsername(loaded_user);
@@ -222,6 +243,11 @@ static bool loadDeviceCredentialsFromPrefs() {
     device_username = loaded_user;
     device_password = loaded_pass;
     webui_auth_enabled = loaded_auth_enabled;
+
+    if (missing_keys) {
+        saveDeviceCredentialsToPrefs();
+    }
+
     return true;
 }
 

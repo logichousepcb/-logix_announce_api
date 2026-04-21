@@ -17,6 +17,7 @@
 static volatile bool eth_connected = false;
 static volatile bool wifi_connected = false;
 static volatile bool event_hooked = false;
+static volatile bool ethernet_started = false;
 static NetworkMode active_mode = NETWORK_MODE_ETH;
 static String wifi_ssid = WIFI_SSID;
 static String wifi_password = WIFI_PASS;
@@ -76,9 +77,15 @@ static void stopWifi() {
 
 static void startEthernet() {
     stopWifi();
+    if (ethernet_started) {
+        Serial.println("NET: Ethernet already started");
+        return;
+    }
+
     Serial.println("NET: starting Ethernet");
     ETH.begin(ETH_PHY_ADDR, ETH_PHY_POWER, ETH_PHY_MDC, ETH_PHY_MDIO,
               ETH_PHY_LAN8720, ETH_CLK_MODE);
+    ethernet_started = true;
     //Serial.println("ETH: Initialising...");
 }
 
@@ -172,6 +179,12 @@ void initNetwork() {
 bool setNetworkMode(NetworkMode mode) {
     Serial.print("NET: switching mode to ");
     Serial.println(mode == NETWORK_MODE_WIFI ? "wifi" : "eth");
+
+    if (active_mode == mode && activeModeHasIp()) {
+        Serial.println("NET: requested mode already active");
+        return true;
+    }
+
     active_mode = mode;
 
     if (mode == NETWORK_MODE_WIFI) {
