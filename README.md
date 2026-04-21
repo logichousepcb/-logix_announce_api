@@ -91,6 +91,11 @@ platformio device monitor
 
 ## Changelog
 
+### v1.109
+
+- Prevent duplicate Ethernet initialization during API startup after restoring saved network mode.
+- Seed default Web UI credential keys on first boot so missing Preferences keys do not log NVS errors.
+
 ### v1.102
 
 - Added hidden GPIO2 long-press factory reset (hold to GND for 10 seconds).
